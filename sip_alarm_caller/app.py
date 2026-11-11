@@ -30,6 +30,7 @@ CLI_PORT = 5556
 
 RE_REG = re.compile(r"registration (success|failed), status=(\d+)")
 RE_CALL_STATE = re.compile(r"Call (\d+) state changed to (\S+)")
+RE_CALL_END = re.compile(r"Call (\d+) is DISCONNECTED")
 # pjsua 2.17 logs "Incoming DTMF on call 0: 1, using RFC2833 method" at level 3.
 # The older stream.c line is level 5 and often compiled out of the Alpine package.
 RE_DTMF = re.compile(
@@ -221,6 +222,9 @@ class Pjsua:
             "--max-calls=1",
             "--log-level=5",
             "--app-log-level=5",
+            # stdout is a pipe, so pjsua block-buffers logs. Without this, CONFIRMED
+            # and DTMF lines never reach us and the call looks unanswered.
+            "--stdout-no-buf",
             "--use-cli",
             f"--cli-telnet-port={CLI_PORT}",
             "--no-cli-console",
@@ -299,10 +303,19 @@ class Pjsua:
                 continue
             m = RE_CALL_STATE.search(text)
             if m:
-                t = {"CONFIRMED": "CALL_ESTABLISHED", "DISCONNCTD": "CALL_CLOSED"}.get(m.group(2))
+                state = m.group(2).strip(".,)")
+                log("pjsua:", text)
+                t = {
+                    "CONFIRMED": "CALL_ESTABLISHED",
+                    "DISCONNCTD": "CALL_CLOSED",
+                    "DISCONNECTED": "CALL_CLOSED",
+                }.get(state)
                 if t:
-                    log("pjsua:", text)
                     await self.events.put({"type": t})
+                continue
+            if RE_CALL_END.search(text):
+                log("pjsua:", text)
+                await self.events.put({"type": "CALL_CLOSED"})
                 continue
             if "DTMF" in text:
                 log("pjsua:", text)
@@ -419,19 +432,20 @@ class Caller:
             while True:
                 timeout = deadline - asyncio.get_event_loop().time()
                 if timeout <= 0:
-                    if established:
-                        log("Keine Quittierung erkannt, Anruf wird beendet.")
+                    log("Keine Quittierung erkannt, Anruf wird beendet." if established
+                        else "Anruf beendet, pjsua hat CONFIRMED nicht gemeldet.")
                     return False
                 try:
                     ev = await asyncio.wait_for(self.sip.events.get(), timeout)
                 except asyncio.TimeoutError:
-                    if established:
-                        log("Keine Quittierung erkannt, Anruf wird beendet.")
+                    log("Keine Quittierung erkannt, Anruf wird beendet." if established
+                        else "Anruf beendet, pjsua hat CONFIRMED nicht gemeldet.")
                     return False
                 t = ev.get("type")
                 if t == "CALL_ESTABLISHED" and not established:
                     established = True
                     deadline = asyncio.get_event_loop().time() + duration + 5
+                    log("Anruf verbunden, warte auf Taste", ack)
                     ear = InbandEar(REC_WAV, self.sip.events)
                     ear.start()
                 elif t == "DTMF":
@@ -441,8 +455,8 @@ class Caller:
                         return True
                     log("Taste", digit, "ignoriert, Quittiertaste ist", ack)
                 elif t == "CALL_CLOSED":
-                    if established:
-                        log("Anruf beendet, bevor quittiert wurde.")
+                    log("Anruf beendet, bevor quittiert wurde." if established
+                        else "Anruf beendet, bevor er verbunden war.")
                     return False
         finally:
             if ear is not None:
@@ -508,7 +522,7 @@ async def main():
         await web.SockSite(runner, v6).start()
     except OSError as e:
         log("IPv6-Port 8099 nicht gebunden:", e)
-    log("SIP Alarm Caller bereit auf Port 8099")
+    log("SIP Alarm Caller 0.2.2 bereit auf Port 8099")
     await asyncio.Event().wait()
 
 
