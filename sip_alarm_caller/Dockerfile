@@ -1,4 +1,4 @@
-ARG BUILD_FROM
+ARG BUILD_FROM="ghcr.io/home-assistant/base:3.24"
 FROM ${BUILD_FROM}
 
 RUN apk add --no-cache baresip python3 py3-aiohttp ffmpeg
