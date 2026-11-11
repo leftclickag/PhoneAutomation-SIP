@@ -63,10 +63,10 @@ def goertzel_power(samples, freq, rate):
 
 
 def detect_dtmf(samples, rate):
-    """One DTMF digit in a ~40 ms block, or None. Tuned against tones, noise and speech."""
+    """One DTMF digit in a ~40 ms block, or None."""
     if not samples:
         return None
-    if max(abs(s) for s in samples) < 800:
+    if max(abs(s) for s in samples) < 300:
         return None
     norm = [s / 32768.0 for s in samples]
 
@@ -74,13 +74,14 @@ def detect_dtmf(samples, rate):
         return sorted(((goertzel_power(norm, f, rate), f) for f in freqs), reverse=True)
 
     rows, cols = ranked(DTMF_ROWS), ranked(DTMF_COLS)
-    if rows[0][0] < rows[1][0] * 6 or cols[0][0] < cols[1][0] * 6:
+    # Real phone lines often have more twist and noise than a clean lab tone.
+    if rows[0][0] < rows[1][0] * 3 or cols[0][0] < cols[1][0] * 3:
         return None
-    floor = (len(norm) * 0.015) ** 2
+    floor = (len(norm) * 0.008) ** 2
     if rows[0][0] < floor or cols[0][0] < floor:
         return None
     ratio = rows[0][0] / cols[0][0]
-    if ratio < 0.2 or ratio > 5:
+    if ratio < 0.15 or ratio > 8:
         return None
     return DTMF_MAP[(rows[0][1], cols[0][1])]
 
@@ -134,6 +135,8 @@ class InbandEar:
         hold = None
         hold_n = 0
         emitted = False
+        loud = 0
+        reported = asyncio.get_event_loop().time()
         while True:
             try:
                 size = os.path.getsize(self.path)
@@ -174,12 +177,20 @@ class InbandEar:
                 samples = struct.unpack("<" + "h" * (len(frame) // 2), frame)
                 if channels > 1:
                     samples = samples[0::channels]
+                peak = max(abs(s) for s in samples)
+                if peak > loud:
+                    loud = peak
+                now = asyncio.get_event_loop().time()
+                if now - reported >= 2:
+                    log("Rueckaudio Pegel", loud)
+                    loud = 0
+                    reported = now
                 digit = detect_dtmf(samples, rate)
                 if digit and digit == hold:
                     hold_n += 1
                 else:
                     hold, hold_n, emitted = digit, (1 if digit else 0), False
-                if digit and hold_n >= 3 and not emitted:
+                if digit and hold_n >= 2 and not emitted:
                     emitted = True
                     log("Tastenton erkannt:", digit)
                     await self.events.put({"type": "DTMF", "param": digit})
@@ -223,6 +234,8 @@ class Pjsua:
             f"--rec-file={REC_WAV}",
             "--auto-rec",
             "--max-calls=1",
+            "--no-vad",
+            "--stun-srv=stun.l.google.com:19302",
             "--log-level=5",
             "--app-log-level=5",
             # stdout is a pipe, so pjsua block-buffers logs. Without this, CONFIRMED
@@ -541,7 +554,7 @@ async def main():
         await web.SockSite(runner, v6).start()
     except OSError as e:
         log("IPv6-Port 8099 nicht gebunden:", e)
-    log("SIP Alarm Caller 0.2.4 bereit auf Port 8099")
+    log("SIP Alarm Caller 0.2.5 bereit auf Port 8099")
     await asyncio.Event().wait()
 
 

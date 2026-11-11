@@ -105,7 +105,7 @@ Checked items below are ones already observed while installing and placing calls
 
 ### Still to confirm
 
-- [ ] After a rebuild of version 0.2.4, the log contains `SIP Alarm Caller 0.2.4 bereit auf Port 8099`
+- [ ] After a rebuild of version 0.2.5, the log contains `SIP Alarm Caller 0.2.5 bereit auf Port 8099`
 - [ ] When the phone is answered, the log contains `Anruf verbunden, warte auf Taste 1`
 - [ ] Pressing 1 stops the retries
 - [ ] The log contains `Quittiert mit Taste 1` or `Tastenton erkannt: 1`
