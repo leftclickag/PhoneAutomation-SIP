@@ -8,8 +8,56 @@ Das Add-on liegt in [`sip_alarm_caller/`](sip_alarm_caller/). Konfiguration und 
 
 ## Installation
 
-- **Öffentliches Repo:** In Home Assistant unter Einstellungen → Add-ons → Add-on-Store → Repositories die URL `https://github.com/leftclickag/PhoneAutomation-SIP` hinzufügen.
-- **Lokal (auch bei privatem Repo):** Den Ordner `sip_alarm_caller/` nach `/addons/` auf dem Home-Assistant-Gerät kopieren (z.B. über das Samba- oder SSH-Add-on). Er erscheint dann unter „Lokale Add-ons".
+> **Namenshinweis:** Ab Home Assistant 2026.2 heißen „Add-ons" in der Oberfläche **„Apps"** (der Store heißt „App Store", lokale Apps erscheinen unter „Local apps"). Ab Supervisor 2026.6 heißt der lokale Ordner auf dem Gerät **`local_apps`** statt `addons`. Beide Namen sind unten berücksichtigt — je nach Home-Assistant-Version den jeweils aktuellen Pfad verwenden. Die folgenden Schritte gelten für Home Assistant OS bzw. Supervised; Home Assistant Container und Core unterstützen keine Apps/Add-ons.
+
+### Variante A: Öffentliches Repo (empfohlen, wenn das Repo auf GitHub öffentlich ist)
+
+1. Home Assistant öffnen → **Einstellungen → Apps** → dort **„Install app"** anklicken → der **App Store** öffnet sich.
+2. Oben rechts aufs **⋯-Menü** klicken → **Repositories**.
+3. URL `https://github.com/leftclickag/PhoneAutomation-SIP` einfügen → **Hinzufügen**.
+4. Zurück im Store: Seite ggf. mit **Strg+F5** neu laden, dann **SIP Alarm Caller** öffnen → **Installieren**.
+
+### Variante B: Lokal per SSH (funktioniert auch bei privatem Repo)
+
+Voraussetzung: Die App **„Terminal & SSH"** ist installiert (Einstellungen → Apps). Dann:
+
+1. Die 5 Dateien aus [`sip_alarm_caller/`](sip_alarm_caller/) (`config.yaml`, `Dockerfile`, `run.sh`, `app.py`, `DOCS.md`) in einen Ordner `sip_alarm_caller` im lokalen Ordner des Geräts kopieren. Die Struktur muss so aussehen:
+
+   ```
+   /local_apps/sip_alarm_caller/config.yaml
+   /local_apps/sip_alarm_caller/Dockerfile
+   /local_apps/sip_alarm_caller/run.sh
+   /local_apps/sip_alarm_caller/app.py
+   /local_apps/sip_alarm_caller/DOCS.md
+   ```
+
+   Im Terminal der SSH-App (mit Schlüssel bzw. Passwort angemeldet) z.B.:
+
+   ```bash
+   mkdir -p /local_apps/sip_alarm_caller
+   # Dateien übertragen, z.B. per scp vom eigenen PC:
+   # scp C:\GitHub\PhoneAutomation-SIP\sip_alarm_caller\* root@homeassistant.local:/local_apps/sip_alarm_caller/
+   ls /local_apps/sip_alarm_caller
+   ```
+
+   **Wichtig:** Der Ordner muss **direkt** in `local_apps` liegen. Ein verschachtelter Pfad wie `local_apps/PhoneAutomation-SIP/sip_alarm_caller/` wird nicht gefunden. Bei älteren Installationen (vor Supervisor 2026.6) heißt der Ordner `/addons` statt `/local_apps` — dort hinein kopieren, falls `local_apps` nicht existiert.
+
+2. Home Assistant öffnen → **Einstellungen → Apps → „Install app"** (App Store).
+3. Oben rechts im **⋯-Menü** → **Nach Updates suchen**.
+4. **Seite mit Strg+F5 hart neu laden** — der Store cachet sonst oft noch den alten Stand.
+5. Ein neuer Abschnitt **„Local apps"** erscheint (ganz oben) mit **SIP Alarm Caller** → anklicken → **Installieren**. Der erste Start baut das Docker-Image aus dem Dockerfile, das dauert einen Moment.
+6. Klappt Schritt 5 nicht: Gerät neu starten (Einstellungen → System) und erneut prüfen.
+
+### Variante B alternativ: Lokal per Samba-Freigabe
+
+Wenn die App **„Samba share"** läuft, im Windows-Explorer `\\homeassistant.local\local_apps` öffnen (ältere Samba-App-Versionen: `\\homeassistant.local\addons` — beide Namen zeigen auf denselben Ordner), dort den Ordner `sip_alarm_caller` mit den 5 Dateien anlegen wie oben. Achtung: Der Datei-Editor und Studio Code Server sehen nur `/config`, **nicht** `local_apps` — zum Kopieren Samba oder SSH verwenden.
+
+### Nach der Installation (gilt für beide Varianten)
+
+1. App öffnen → Tab **Konfiguration**: SIP-Zugangsdaten eintragen (`sip_server`, `sip_user`, `sip_password`), Zielnummern im Format `+41791234567`, ggf. `tts_engine` prüfen (Standard `tts.piper`, siehe DOCS.md) → **Speichern**.
+2. **Start** drücken (und „Beim Booten starten" aktivieren).
+3. Tab **Log** öffnen: Ist die SIP-Registrierung erfolgreich? (Siehe „Empfohlener Testablauf" unten.)
+4. Fehlerhafte App-Konfiguration wird im Store **still übersprungen** — im Zweifel unter **Einstellungen → System → Logs → Dropdown oben rechts → „Supervisor"** nach Warnungen zu `sip_alarm_caller` suchen.
 
 ## Voraussetzungen
 
