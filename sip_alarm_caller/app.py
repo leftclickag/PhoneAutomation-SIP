@@ -13,6 +13,7 @@ import asyncio
 import json
 import math
 import os
+import pty
 import re
 import socket
 import struct
@@ -28,7 +29,8 @@ MSG_WAV = "/tmp/message.wav"
 REC_WAV = "/tmp/rx.wav"
 CLI_PORT = 5556
 
-RE_REG = re.compile(r"registration (success|failed), status=(\d+)")
+RE_REG = re.compile(r"registration (success|failed), status=(\d+)", re.I)
+RE_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 RE_CALL_STATE = re.compile(r"Call (\d+) state changed to (\S+)")
 RE_CALL_END = re.compile(r"Call (\d+) is DISCONNECTED")
 # pjsua 2.17 logs "Incoming DTMF on call 0: 1, using RFC2833 method" at level 3.
@@ -201,6 +203,8 @@ class Pjsua:
         self.proc = None
         self.telnet = None
         self.wav = None
+        self.log_task = None
+        self.saw_log = False
 
     def args(self):
         o = OPTIONS
@@ -239,22 +243,35 @@ class Pjsua:
 
     async def start(self, wav):
         self.wav = wav
-        self.proc = await asyncio.create_subprocess_exec(
-            *self.args(),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT)
-        asyncio.create_task(self._read_log(self.proc.stdout))
+        self.saw_log = False
+        # A pipe makes pjsua block-buffer its log, so CONFIRMED and DTMF never
+        # arrive. A pty is line-buffered, same as a terminal.
+        master, slave = pty.openpty()
+        try:
+            self.proc = await asyncio.create_subprocess_exec(
+                *self.args(),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=slave,
+                stderr=slave)
+        finally:
+            os.close(slave)
+        os.set_blocking(master, False)
+        reader = asyncio.StreamReader()
+        await asyncio.get_running_loop().connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(reader),
+            os.fdopen(master, "rb", buffering=0))
+        self.log_task = asyncio.create_task(self._read_log(reader))
         for _ in range(60):
             if self.proc.returncode is not None:
                 raise RuntimeError(f"pjsua wurde beendet (rc={self.proc.returncode})")
             try:
-                reader, self.telnet = await asyncio.open_connection("127.0.0.1", CLI_PORT)
+                telnet_reader, self.telnet = await asyncio.open_connection("127.0.0.1", CLI_PORT)
                 break
             except OSError:
                 await asyncio.sleep(0.5)
         else:
             raise RuntimeError("pjsua-CLI (Telnet) nicht erreichbar")
-        asyncio.create_task(self._drain_telnet(reader))
+        asyncio.create_task(self._drain_telnet(telnet_reader))
         log("pjsua gestartet, warte auf SIP-Registrierung ...")
         for _ in range(20):
             try:
@@ -270,7 +287,10 @@ class Pjsua:
                 log("WARNUNG: SIP-Registrierung fehlgeschlagen (Status", ev.get("param"), "). Anruf wird trotzdem versucht.")
                 break
         else:
-            log("Keine Registrierungs-Rueckmeldung erhalten, fahre trotzdem fort.")
+            if self.saw_log:
+                log("Keine Registrierungszeile gesehen. Der Anruf wird trotzdem versucht.")
+            else:
+                log("Keine Ausgabe von pjsua gesehen. Der Anruf wird trotzdem versucht.")
 
     async def restart(self, wav):
         await self.stop()
@@ -289,13 +309,23 @@ class Pjsua:
                 self.proc.kill()
                 await self.proc.wait()
         self.proc = None
+        if self.log_task:
+            self.log_task.cancel()
+            try:
+                await self.log_task
+            except asyncio.CancelledError:
+                pass
+            self.log_task = None
 
     async def _read_log(self, reader):
         while True:
             line = await reader.readline()
             if not line:
                 break
-            text = line.decode("utf-8", "replace").rstrip()
+            text = RE_ANSI.sub("", line.decode("utf-8", "replace")).rstrip()
+            if not text:
+                continue
+            self.saw_log = True
             m = RE_REG.search(text)
             if m:
                 log("pjsua:", text)
@@ -425,8 +455,13 @@ class Caller:
         target = number if number.startswith("sip:") else f'sip:{number}@{o["sip_server"]}{tparam}'
         await self.sip.command(f"call new {target}")
         established = False
-        ear = None
         ack = str(o["ack_digit"])
+        # Listen for the key from the moment of dialing. The tone listener used
+        # to start only after a CONFIRMED line, which never arrived while pjsua's
+        # log was stuck in a pipe buffer.
+        ear = InbandEar(REC_WAV, self.sip.events)
+        ear.start()
+        log("Hoere auf Taste", ack)
         deadline = asyncio.get_event_loop().time() + o["ring_timeout"]
         try:
             while True:
@@ -446,8 +481,6 @@ class Caller:
                     established = True
                     deadline = asyncio.get_event_loop().time() + duration + 5
                     log("Anruf verbunden, warte auf Taste", ack)
-                    ear = InbandEar(REC_WAV, self.sip.events)
-                    ear.start()
                 elif t == "DTMF":
                     digit = str(ev.get("param"))
                     if digit == ack:
@@ -459,8 +492,7 @@ class Caller:
                         else "Anruf beendet, bevor er verbunden war.")
                     return False
         finally:
-            if ear is not None:
-                await ear.stop()
+            await ear.stop()
             await self.sip.hangup()
             await asyncio.sleep(2)
 
@@ -522,7 +554,7 @@ async def main():
         await web.SockSite(runner, v6).start()
     except OSError as e:
         log("IPv6-Port 8099 nicht gebunden:", e)
-    log("SIP Alarm Caller 0.2.2 bereit auf Port 8099")
+    log("SIP Alarm Caller 0.2.3 bereit auf Port 8099")
     await asyncio.Event().wait()
 
 

@@ -1,5 +1,5 @@
 name: SIP Alarm Caller
-version: "0.2.2"
+version: "0.2.3"
 slug: sip_alarm_caller
 description: Ruft bei Alarm (z.B. Alarmo) per SIP an und spricht einen TTS-Text, wiederholt bis quittiert.
 url: https://github.com/leftclickag/PhoneAutomation-SIP
