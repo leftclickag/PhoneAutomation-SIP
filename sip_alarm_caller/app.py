@@ -13,7 +13,6 @@ import asyncio
 import json
 import math
 import os
-import pty
 import re
 import socket
 import struct
@@ -244,23 +243,14 @@ class Pjsua:
     async def start(self, wav):
         self.wav = wav
         self.saw_log = False
-        # A pipe makes pjsua block-buffer its log, so CONFIRMED and DTMF never
-        # arrive. A pty is line-buffered, same as a terminal.
-        master, slave = pty.openpty()
-        try:
-            self.proc = await asyncio.create_subprocess_exec(
-                *self.args(),
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=slave,
-                stderr=slave)
-        finally:
-            os.close(slave)
-        os.set_blocking(master, False)
-        reader = asyncio.StreamReader()
-        await asyncio.get_running_loop().connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(reader),
-            os.fdopen(master, "rb", buffering=0))
-        self.log_task = asyncio.create_task(self._read_log(reader))
+        # The addon container cannot allocate a pty (Errno 5). pjsua is started
+        # with --stdout-no-buf so its log still arrives through this pipe.
+        self.proc = await asyncio.create_subprocess_exec(
+            *self.args(),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT)
+        self.log_task = asyncio.create_task(self._read_log(self.proc.stdout))
         for _ in range(60):
             if self.proc.returncode is not None:
                 raise RuntimeError(f"pjsua wurde beendet (rc={self.proc.returncode})")
@@ -326,15 +316,15 @@ class Pjsua:
             if not text:
                 continue
             self.saw_log = True
+            if any(k in text for k in ("registr", "Call ", "DTMF", "DISCONN")) and "password" not in text.lower():
+                log("pjsua:", text)
             m = RE_REG.search(text)
             if m:
-                log("pjsua:", text)
                 await self.events.put({"type": "REG_OK" if m.group(1) == "success" else "REG_FAIL", "param": m.group(2)})
                 continue
             m = RE_CALL_STATE.search(text)
             if m:
                 state = m.group(2).strip(".,)")
-                log("pjsua:", text)
                 t = {
                     "CONFIRMED": "CALL_ESTABLISHED",
                     "DISCONNCTD": "CALL_CLOSED",
@@ -344,11 +334,8 @@ class Pjsua:
                     await self.events.put({"type": t})
                 continue
             if RE_CALL_END.search(text):
-                log("pjsua:", text)
                 await self.events.put({"type": "CALL_CLOSED"})
                 continue
-            if "DTMF" in text:
-                log("pjsua:", text)
             m = RE_DTMF.search(text)
             if m:
                 digit = m.group(1) or m.group(2)
@@ -554,7 +541,7 @@ async def main():
         await web.SockSite(runner, v6).start()
     except OSError as e:
         log("IPv6-Port 8099 nicht gebunden:", e)
-    log("SIP Alarm Caller 0.2.3 bereit auf Port 8099")
+    log("SIP Alarm Caller 0.2.4 bereit auf Port 8099")
     await asyncio.Event().wait()
 
 
