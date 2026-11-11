@@ -1,7 +1,7 @@
 name: SIP Alarm Caller
-version: "0.2.6"
+version: "0.2.7"
 slug: sip_alarm_caller
-description: Ruft bei Alarm (z.B. Alarmo) per SIP an und spricht einen TTS-Text, wiederholt bis quittiert.
+description: Ruft bei Alarm (z.B. Alarmo) per SIP an, spricht einen TTS-Text und wiederholt, bis in Home Assistant gestoppt wird.
 url: https://github.com/leftclickag/PhoneAutomation-SIP
 arch:
   - aarch64
@@ -21,14 +21,13 @@ options:
   sip_outbound_proxy: ""
   sip_transport: udp
   numbers: []
-  default_message: "Achtung! Es wurde ein Alarm ausgelöst. Bitte drücke die Taste 1 zum Quittieren."
+  default_message: "Achtung! Es wurde ein Alarm ausgelöst."
   message_repeats: 3
   tts_engine: tts.piper
   tts_language: de_DE
   ring_timeout: 40
   retry_interval: 120
   max_rounds: 10
-  ack_digit: "1"
   api_token: ""
 schema:
   sip_server: str
@@ -46,5 +45,4 @@ schema:
   ring_timeout: int(10,120)
   retry_interval: int(10,3600)
   max_rounds: int(1,100)
-  ack_digit: match(^[0-9*#]$)
   api_token: password?

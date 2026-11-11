@@ -1,17 +1,19 @@
-"""SIP Alarm Caller: HTTP-Trigger -> TTS -> pjsua-Anruf, Wiederholung bis DTMF-Quittierung.
+"""SIP Alarm Caller: HTTP-Trigger -> TTS -> pjsua-Anruf.
+
+Die Anrufe wiederholen sich, bis Home Assistant POST /stop schickt oder die
+maximale Rundenzahl erreicht ist. Eine Taste am Telefon beendet den Lauf nicht:
+viele Mobilnetze liefern die Taste nicht an den SIP-Client zurueck.
 
 Steuerung: pjsua (PJSIP) laeuft als Unterprozess mit Telnet-CLI. Anruf- und
 Registrierungsereignisse werden aus dem stdout-Log geparst:
 - "Call N state changed to CONFIRMED/DISCONNCTD"          (pjsua_app.c)
-- "Incoming DTMF on call N: X, using RFC2833/SIP INFO"    (pjsua_app.c, Level 3)
 - "registration success/failed, status=N"                 (pjsua_acc.c)
 
-Zusaetzlich wird das vom Gegenueber empfangene Audio mitgelesen. Viele
-Mobilnetze schicken die Taste nur als Ton, und pjsua erkennt Inband-DTMF nicht.
+Ob jemand abgenommen hat, wird zusaetzlich am Pegel des zurueckkommenden
+Audios erkannt. Die Zeile CONFIRMED fehlt auf manchen Leitungen.
 """
 import asyncio
 import json
-import math
 import os
 import re
 import socket
@@ -32,61 +34,10 @@ RE_REG = re.compile(r"registration (success|failed), status=(\d+)", re.I)
 RE_ANSI = re.compile(r"\x1b\[[0-9;]*m")
 RE_CALL_STATE = re.compile(r"Call (\d+) state changed to (\S+)")
 RE_CALL_END = re.compile(r"Call (\d+) is DISCONNECTED")
-# pjsua 2.17 logs "Incoming DTMF on call 0: 1, using RFC2833 method" at level 3.
-# The older stream.c line is level 5 and often compiled out of the Alpine package.
-RE_DTMF = re.compile(
-    r"Incoming DTMF on call \d+: ([0-9*#])|Received DTMF digit ([0-9*#])")
-
-DTMF_ROWS = (697, 770, 852, 941)
-DTMF_COLS = (1209, 1336, 1477, 1633)
-DTMF_MAP = {
-    (697, 1209): "1", (697, 1336): "2", (697, 1477): "3", (697, 1633): "A",
-    (770, 1209): "4", (770, 1336): "5", (770, 1477): "6", (770, 1633): "B",
-    (852, 1209): "7", (852, 1336): "8", (852, 1477): "9", (852, 1633): "C",
-    (941, 1209): "*", (941, 1336): "0", (941, 1477): "#", (941, 1633): "D",
-}
 
 
 def log(*a):
     print(*a, flush=True)
-
-
-def goertzel_power(samples, freq, rate):
-    w = 2 * math.pi * freq / rate
-    coeff = 2 * math.cos(w)
-    s1 = s2 = 0.0
-    for x in samples:
-        s = x + coeff * s1 - s2
-        s2 = s1
-        s1 = s
-    return s1 * s1 + s2 * s2 - coeff * s1 * s2
-
-
-def detect_dtmf(samples, rate):
-    """One DTMF digit in a ~40 ms block, or None.
-
-    The gate is low on purpose. On a real call the key showed up around
-    a peak of 200, while a lab tone is in the thousands.
-    """
-    if not samples:
-        return None
-    if max(abs(s) for s in samples) < 80:
-        return None
-    norm = [s / 32768.0 for s in samples]
-
-    def ranked(freqs):
-        return sorted(((goertzel_power(norm, f, rate), f) for f in freqs), reverse=True)
-
-    rows, cols = ranked(DTMF_ROWS), ranked(DTMF_COLS)
-    if rows[0][0] < rows[1][0] * 3 or cols[0][0] < cols[1][0] * 3:
-        return None
-    floor = (len(norm) * 0.0004) ** 2
-    if rows[0][0] < floor or cols[0][0] < floor:
-        return None
-    ratio = rows[0][0] / cols[0][0]
-    if ratio < 0.15 or ratio > 8:
-        return None
-    return DTMF_MAP[(rows[0][1], cols[0][1])]
 
 
 def wav_format(header):
@@ -111,7 +62,7 @@ def wav_format(header):
 
 
 class InbandEar:
-    """Reads the remote-audio WAV pjsua is writing and emits stable DTMF digits."""
+    """Reads the remote-audio WAV pjsua is writing and reports its peak level."""
 
     def __init__(self, path, events):
         self.path = path
@@ -135,9 +86,6 @@ class InbandEar:
         fmt = None
         pos = 0
         buf = b""
-        hold = None
-        hold_n = 0
-        emitted = False
         loud = 0
         reported = asyncio.get_event_loop().time()
         while True:
@@ -155,14 +103,14 @@ class InbandEar:
                 rate, channels, data_off = fmt
                 width = channels * 2
                 pos = size - ((size - data_off) % width)
-                log("Hoere auf Tastentoene im Gegensprech-Audio (", rate, "Hz ).")
+                log("Messe Gegensprech-Audio (", rate, "Hz ).")
                 continue
             rate, channels, data_off = fmt
             width = channels * 2
             frame_n = max(1, int(rate * 0.04))
             frame_bytes = frame_n * width
             if size < pos:
-                pos, buf, hold, hold_n, emitted = data_off, b"", None, 0, False
+                pos, buf = data_off, b""
             if size - pos > rate * width:
                 pos = size - rate * width
                 pos -= (pos - data_off) % width
@@ -189,15 +137,6 @@ class InbandEar:
                     await self.events.put({"type": "LEVEL", "param": loud})
                     loud = 0
                     reported = now
-                digit = detect_dtmf(samples, rate)
-                if digit and digit == hold:
-                    hold_n += 1
-                else:
-                    hold, hold_n, emitted = digit, (1 if digit else 0), False
-                if digit and hold_n >= 2 and not emitted:
-                    emitted = True
-                    log("Tastenton erkannt:", digit)
-                    await self.events.put({"type": "DTMF", "param": digit})
 
 
 def write_silence(path, seconds=1):
@@ -243,7 +182,7 @@ class Pjsua:
             "--log-level=5",
             "--app-log-level=5",
             # stdout is a pipe, so pjsua block-buffers logs. Without this, CONFIRMED
-            # and DTMF lines never reach us and the call looks unanswered.
+            # never reaches us and the call looks unanswered.
             "--stdout-no-buf",
             "--use-cli",
             f"--cli-telnet-port={CLI_PORT}",
@@ -352,11 +291,6 @@ class Pjsua:
                 continue
             if RE_CALL_END.search(text):
                 await self.events.put({"type": "CALL_CLOSED"})
-                continue
-            m = RE_DTMF.search(text)
-            if m:
-                digit = m.group(1) or m.group(2)
-                await self.events.put({"type": "DTMF", "param": digit})
 
     async def _drain_telnet(self, reader):
         while await reader.read(4096):
@@ -412,7 +346,7 @@ class Caller:
     def __init__(self, sip):
         self.sip = sip
         self.task = None
-        self.acked = asyncio.Event()
+        self.stopping = False
 
     def running(self):
         return self.task is not None and not self.task.done()
@@ -420,90 +354,104 @@ class Caller:
     async def trigger(self, message):
         if self.running():
             return False
-        self.acked.clear()
+        self.stopping = False
         self.task = asyncio.create_task(self.run(message))
         return True
 
     async def stop(self):
-        if self.running():
-            self.task.cancel()
+        self.stopping = True
+        task = self.task if self.running() else None
+        if task is not None:
+            task.cancel()
         await self.sip.hangup()
-        self.acked.clear()
+        if task is None:
+            log("Anrufe gestoppt.")
+            return
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
     async def run(self, message):
         o = OPTIONS
         try:
-            duration = await make_audio(message or o["default_message"])
-        except Exception as e:
-            log("TTS-Fehler:", e)
-            return
-        try:
-            await self.sip.restart(MSG_WAV)
-        except Exception as e:
-            log("pjsua-Start fehlgeschlagen:", e)
-            return
-        for rnd in range(1, o["max_rounds"] + 1):
-            for number in o["numbers"]:
-                log(f"Runde {rnd}: rufe {number} an")
-                if await self.call(number, duration):
-                    log("Quittiert, beende Anrufe.")
+            try:
+                duration = await make_audio(message or o["default_message"])
+            except Exception as e:
+                log("TTS-Fehler:", e)
+                return
+            try:
+                await self.sip.restart(MSG_WAV)
+            except Exception as e:
+                log("pjsua-Start fehlgeschlagen:", e)
+                return
+            for rnd in range(1, o["max_rounds"] + 1):
+                for number in o["numbers"]:
+                    if self.stopping:
+                        log("Anrufe gestoppt.")
+                        return
+                    log(f"Runde {rnd}: rufe {number} an")
+                    await self.call(number, duration)
+                if self.stopping:
+                    log("Anrufe gestoppt.")
                     return
-            await asyncio.sleep(o["retry_interval"])
-        log("Maximale Anzahl Runden erreicht.")
+                if rnd == o["max_rounds"]:
+                    break
+                log(f"Naechste Runde in {o['retry_interval']} Sekunden. Stoppen ueber den Knopf in Home Assistant.")
+                await asyncio.sleep(o["retry_interval"])
+            log("Maximale Anzahl Runden erreicht.")
+        except asyncio.CancelledError:
+            log("Anrufe gestoppt.")
+            raise
 
     async def call(self, number, duration):
-        """True wenn Quittierung per DTMF erfolgte."""
+        """One call. Plays the message, then hangs up. /stop ends the whole run."""
         o = OPTIONS
         self.sip.drain_events()
         tparam = "" if o["sip_transport"] == "udp" else f";transport={o['sip_transport']}"
         target = number if number.startswith("sip:") else f'sip:{number}@{o["sip_server"]}{tparam}'
         await self.sip.command(f"call new {target}")
-        established = False
-        ack = str(o["ack_digit"])
-        # Listen for the key from the moment of dialing. The tone listener used
-        # to start only after a CONFIRMED line, which never arrived while pjsua's
-        # log was stuck in a pipe buffer.
+        # CONFIRMED often never shows up on this trunk, so answer detection also
+        # uses the return-audio level. The ear starts at dial time.
         ear = InbandEar(REC_WAV, self.sip.events)
         ear.start()
-        log("Hoere auf Taste", ack)
-        heard = False
+        answered = False
         deadline = asyncio.get_event_loop().time() + o["ring_timeout"]
         try:
             while True:
+                if self.stopping:
+                    log("Anruf abgebrochen.")
+                    return
                 timeout = deadline - asyncio.get_event_loop().time()
                 if timeout <= 0:
-                    log("Keine Quittierung erkannt, Anruf wird beendet." if established
-                        else "Anruf beendet, pjsua hat CONFIRMED nicht gemeldet.")
-                    return False
+                    log("Nachricht fertig, lege auf." if answered else "Niemand hat abgenommen.")
+                    return
                 try:
                     ev = await asyncio.wait_for(self.sip.events.get(), timeout)
                 except asyncio.TimeoutError:
-                    log("Keine Quittierung erkannt, Anruf wird beendet." if established
-                        else "Anruf beendet, pjsua hat CONFIRMED nicht gemeldet.")
-                    return False
+                    log("Nachricht fertig, lege auf." if answered else "Niemand hat abgenommen.")
+                    return
                 t = ev.get("type")
-                if t == "CALL_ESTABLISHED" and not established:
-                    established = True
+                if not answered and (t == "CALL_ESTABLISHED" or (t == "LEVEL" and ev.get("param", 0) >= 1000)):
+                    answered = True
                     deadline = asyncio.get_event_loop().time() + duration + 5
-                    log("Anruf verbunden, warte auf Taste", ack)
-                elif t == "LEVEL" and not heard and ev.get("param", 0) >= 1000:
-                    heard = True
-                    deadline = asyncio.get_event_loop().time() + duration + 5
-                    log("Gegensprech-Audio da, warte auf Taste", ack)
-                elif t == "DTMF":
-                    digit = str(ev.get("param"))
-                    if digit == ack:
-                        log("Quittiert mit Taste", digit)
-                        return True
-                    log("Taste", digit, "ignoriert, Quittiertaste ist", ack)
+                    log("Anruf verbunden, spiele Nachricht.")
                 elif t == "CALL_CLOSED":
-                    log("Anruf beendet, bevor quittiert wurde." if established
-                        else "Anruf beendet, bevor er verbunden war.")
-                    return False
+                    log("Gegenstelle hat aufgelegt." if answered else "Anruf beendet, bevor er verbunden war.")
+                    return
         finally:
-            await ear.stop()
-            await self.sip.hangup()
-            await asyncio.sleep(2)
+            # Uncancel before the awaits, otherwise this cleanup is skipped and
+            # the phone keeps playing until the task dies.
+            task = asyncio.current_task()
+            uncancel = getattr(task, "uncancel", None)
+            while task is not None and uncancel and task.cancelling():
+                uncancel()
+            try:
+                await ear.stop()
+                await self.sip.hangup()
+                await asyncio.sleep(2)
+            except Exception as e:
+                log("Auflegen fehlgeschlagen:", e)
 
 
 # ---------------------------------------------------------------- HTTP-API
@@ -563,7 +511,7 @@ async def main():
         await web.SockSite(runner, v6).start()
     except OSError as e:
         log("IPv6-Port 8099 nicht gebunden:", e)
-    log("SIP Alarm Caller 0.2.6 bereit auf Port 8099")
+    log("SIP Alarm Caller 0.2.7 bereit auf Port 8099")
     await asyncio.Event().wait()
 
 

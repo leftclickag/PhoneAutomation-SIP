@@ -2,9 +2,9 @@
 
 # PhoneAutomation-SIP
 
-Home-Assistant-App der Leftclick AG. Ruft bei einem Alarm (z.B. aus [Alarmo](https://github.com/nielsfaber/alarmo)) über einen eigenen SIP-Anbieter (z.B. PhoneStar, Swisscom) an, spricht einen Text per Text-to-Speech und wiederholt die Anrufe, bis jemand per Tastendruck quittiert. Eine Alternative zu Twilio ohne Kosten pro Anruf.
+Home-Assistant-App der Leftclick AG. Ruft bei einem Alarm (z.B. aus [Alarmo](https://github.com/nielsfaber/alarmo)) über einen eigenen SIP-Anbieter (z.B. PhoneStar, Swisscom) an, spricht einen Text per Text-to-Speech und wiederholt die Anrufe, bis jemand in Home Assistant auf **Stop alarm calls** drückt. Eine Alternative zu Twilio ohne Kosten pro Anruf.
 
-> **Status: der Anruf funktioniert, die Quittierung ist noch nicht bestätigt.** Die App lässt sich in Home Assistant installieren und baut einen echten SIP-Anruf auf. Dass die Quittiertaste die Wiederholungen beendet, ist noch nicht bestätigt. Nicht als alleinigen Alarmweg verwenden. Offene Punkte stehen in der [Checkliste](#checkliste).
+> **Status: der Anruf funktioniert. Das Stoppen über den Home-Assistant-Knopf muss auf einem Gerät noch geprüft werden.** Eine Taste am Telefon beendet die Wiederholungen nicht. Nicht als alleinigen Alarmweg verwenden. Offene Punkte stehen in der [Checkliste](#checkliste).
 
 Die App liegt in [`sip_alarm_caller/`](sip_alarm_caller/). Konfiguration und Home-Assistant-Einbindung stehen in [`sip_alarm_caller/DOCS.md`](sip_alarm_caller/DOCS.md) (Englisch) und [`sip_alarm_caller/DOCS.de.md`](sip_alarm_caller/DOCS.de.md).
 
@@ -72,11 +72,11 @@ Wenn die App **„Samba share"** läuft, im Windows-Explorer `\\homeassistant.lo
 
 Diese Punkte sind beim Schreiben angenommen worden und müssen auf einem echten System geprüft werden. Abhaken in der [Checkliste](#checkliste).
 
-1. **pjsua-Steuerung.** Die SIP-Engine ist **pjsua** (PJSIP), gestartet mit Telnet-CLI (`--use-cli`, `--cli-telnet-port`) und Log-Level 5. Anruf- und Registrierungsereignisse werden aus dem Log geparst (`Call N state changed to`, `registration success/failed`). DTMF über SIP steht in der Zeile `Incoming DTMF on call N: X, using … method`. Weil die Ausgabe von pjsua in eine Pipe geht, startet die App es mit `--stdout-no-buf`. Ohne dieses Flag bleiben Antwort- und Tasten-Zeilen im Puffer und die App sieht sie nicht.
+1. **pjsua-Steuerung.** Die SIP-Engine ist **pjsua** (PJSIP), gestartet mit Telnet-CLI (`--use-cli`, `--cli-telnet-port`) und Log-Level 5. Anruf- und Registrierungsereignisse werden aus dem Log geparst (`Call N state changed to`, `registration success/failed`). Weil die Ausgabe von pjsua in eine Pipe geht, startet die App es mit `--stdout-no-buf`. Ohne dieses Flag bleibt die Antwort-Zeile im Puffer und die App sieht sie nicht.
 2. **Pakete.** `pjsua`, `py3-aiohttp` und `ffmpeg` sind in Alpine 3.24 enthalten, der Basis des Home-Assistant-Images. **baresip ist dort nicht verfügbar** (nur in Alpine edge/testing). Deshalb verwendet die App pjsua.
 3. **TTS über die HA-API.** `POST http://supervisor/core/api/tts_get_url` mit `homeassistant_api: true` liefert ein Feld `path`, das sich vom gleichen Proxy herunterladen lässt.
 4. **Piper-Standardwerte.** Die Entity `tts.piper` und die Sprache `de_DE` sind Platzhalter. Der tatsächliche Name steht unter Einstellungen → Geräte & Dienste → Wyoming-Protokoll.
-5. **Quittierung.** Die eingestellte Taste (Standard `1`) soll die Wiederholungen beenden. Erkannt wird sie als SIP-DTMF (RFC 2833/4733 oder SIP INFO) und als Ton im zurückkommenden Audio, weil viele Mobilnetze die Taste nur hörbar übertragen.
+5. **Anrufe beenden.** Die Wiederholungen enden, wenn Home Assistant `POST /stop` schickt, über den Knopf **Stop alarm calls** oder über die Automation beim Deaktivieren des Alarms. Eine Taste am Telefon wird ignoriert, weil die getestete Leitung sie nicht geliefert hat.
 6. **PhoneStar / Swisscom.** Anbieterspezifische Einstellungen (Server, Registrierung, Proxy, Transport, Rufnummernformat) sind nicht hinterlegt. Die App erwartet eine normale SIP-Registrierung und Nummern im internationalen Format (`+41...`).
 7. **Wer einen Anruf auslösen kann.** Port 8099 ist am Host erreichbar. Ohne `api_token` kann jedes Gerät im LAN Anrufe starten. Vor dem echten Einsatz einen Token setzen.
 8. **Ein Anruf gleichzeitig.** Ein Alarmlauf führt immer nur einen Anruf. Die Nummern werden nacheinander angerufen, nicht parallel.
@@ -85,15 +85,15 @@ Diese Punkte sind beim Schreiben angenommen worden und müssen auf einem echten 
 
 1. Piper installieren und eine TTS-Entity prüfen.
 2. App installieren, SIP-Daten und die eigene Nummer eintragen, starten und das Log lesen.
-3. `rest_command.sip_alarm_call` aus den Entwicklerwerkzeugen auslösen. Hört man den Text? Beendet Taste 1 die Anrufe?
-4. Erst danach Alarmo anbinden und Wiederholungen sowie `/stop` testen.
+3. `rest_command.sip_alarm_call` aus den Entwicklerwerkzeugen auslösen. Hört man den Text? Legt **Stop alarm calls** auf und beendet die Wiederholungen?
+4. Erst danach Alarmo anbinden und Wiederholungen sowie den Stop-Knopf testen.
 5. Zusätzlich einen unabhängigen Weg behalten, z.B. die Push-Benachrichtigung der Home-Assistant-Companion-App.
 
 ## Checkliste
 
 Checkliste für diese App auf einem echten Home-Assistant-System. Ein Punkt gilt als erledigt, wenn `- [ ]` zu `- [x]` geändert wurde, nachdem das Verhalten tatsächlich funktioniert hat. Neue Punkte auf dieselbe Art ergänzen.
 
-Abgehakte Punkte wurden beim Installieren und Anrufen bereits beobachtet. Offene Punkte, einschliesslich der Quittiertaste, sind noch nicht bestätigt.
+Abgehakte Punkte wurden beim Installieren und Anrufen bereits beobachtet. Offene Punkte, einschliesslich des Stop-Knopfs, sind noch nicht bestätigt.
 
 ### Erledigt
 
@@ -101,15 +101,13 @@ Abgehakte Punkte wurden beim Installieren und Anrufen bereits beobachtet. Offene
 - [x] Der Prozess startet und lauscht auf Port 8099
 - [x] `rest_command.sip_alarm_call` auf `http://127.0.0.1:8099/alarm` baut einen ausgehenden Anruf auf
 - [x] Das Telefon klingelt und die Ansage wird abgespielt
-- [x] Ohne Quittierung folgt nach der Pause ein weiterer Anruf
+- [x] Nach einer Runde folgt nach der Pause ein weiterer Anruf
 
 ### Noch zu bestätigen
 
-- [ ] Nach einem Rebuild von Version 0.2.6 enthält das Log `SIP Alarm Caller 0.2.6 bereit auf Port 8099`
-- [ ] Nach dem Abheben enthält das Log `Anruf verbunden, warte auf Taste 1`
-- [ ] Taste 1 beendet die Wiederholungen
-- [ ] Das Log enthält `Quittiert mit Taste 1` oder `Tastenton erkannt: 1`
-- [ ] `rest_command.sip_alarm_stop` legt auf und beendet den Alarmlauf
+- [ ] Nach einem Rebuild von Version 0.2.7 enthält das Log `SIP Alarm Caller 0.2.7 bereit auf Port 8099`
+- [ ] Nach dem Abheben enthält das Log `Anruf verbunden, spiele Nachricht.`
+- [ ] **Stop alarm calls** (`button.stop_alarm_calls`) legt auf und das Log enthält `Anrufe gestoppt.`
 - [ ] Ein Alarmo-Auslöser startet die Anrufe, das Deaktivieren des Alarms stoppt sie
 - [ ] Mit gesetztem `api_token` wird ein Aufruf ohne Bearer-Token abgelehnt
 - [ ] Die Transporte TCP und TLS registrieren sich und bauen einen Anruf auf

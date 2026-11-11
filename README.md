@@ -2,9 +2,9 @@ English | [Deutsch](README.de.md)
 
 # PhoneAutomation-SIP
 
-Home Assistant app by Leftclick AG. When an alarm fires (for example from [Alarmo](https://github.com/nielsfaber/alarmo)), it calls a phone through your own SIP provider, speaks a text-to-speech message, and repeats the calls until someone acknowledges with a keypress. An alternative to Twilio without a fee per call.
+Home Assistant app by Leftclick AG. When an alarm fires (for example from [Alarmo](https://github.com/nielsfaber/alarmo)), it calls a phone through your own SIP provider, speaks a text-to-speech message, and repeats the calls until someone presses **Stop alarm calls** in Home Assistant. An alternative to Twilio without a fee per call.
 
-> **Status: the call works, acknowledgement is not confirmed yet.** The app installs on Home Assistant and places a real SIP call. Pressing the acknowledge key has not been confirmed to stop the retries. Do not use it as the only alarm path. Open checks are in [Checklist](#checklist).
+> **Status: the call works. Stopping it from the Home Assistant button still needs a check on a device.** A key on the phone does not stop the retries. Do not use this as the only alarm path. Open checks are in [Checklist](#checklist).
 
 The app lives in [`sip_alarm_caller/`](sip_alarm_caller/). Configuration and the Home Assistant wiring are in [`sip_alarm_caller/DOCS.md`](sip_alarm_caller/DOCS.md).
 
@@ -72,11 +72,11 @@ If the **Samba share** app is running, open `\\homeassistant.local\local_apps` i
 
 These points were assumed while writing the app and still need a check on a real system. Tick them off in the [checklist](#checklist).
 
-1. **pjsua control.** The SIP engine is **pjsua** (PJSIP), started with a telnet CLI (`--use-cli`, `--cli-telnet-port`) and log level 5. Call and registration events are parsed from the log (`Call N state changed to`, `registration success/failed`). SIP DTMF is the line `Incoming DTMF on call N: X, using … method`. pjsua's stdout is a pipe, so the app starts it with `--stdout-no-buf`. Without that flag the answer and keypress lines stay buffered and the app never sees them.
+1. **pjsua control.** The SIP engine is **pjsua** (PJSIP), started with a telnet CLI (`--use-cli`, `--cli-telnet-port`) and log level 5. Call and registration events are parsed from the log (`Call N state changed to`, `registration success/failed`). pjsua's stdout is a pipe, so the app starts it with `--stdout-no-buf`. Without that flag the answer line stays buffered and the app never sees it.
 2. **Packages.** `pjsua`, `py3-aiohttp`, and `ffmpeg` are in Alpine 3.24, which is the Home Assistant base image. **baresip is not** (it exists only in Alpine edge/testing), which is why the app uses pjsua.
 3. **TTS through the HA API.** `POST http://supervisor/core/api/tts_get_url` with `homeassistant_api: true` returns a `path` that can be downloaded from the same proxy.
 4. **Piper defaults.** The entity `tts.piper` and the language `de_DE` are placeholders. The real entity name is under Settings → Devices & services → Wyoming Protocol.
-5. **Acknowledgement.** The configured key (default `1`) should stop the retries. It is accepted both as SIP DTMF (RFC 2833/4733 or SIP INFO) and as a tone in the audio coming back from the phone, because many mobile networks only forward the key as sound.
+5. **Stopping the calls.** Retries end when Home Assistant sends `POST /stop`, from the **Stop alarm calls** button or from the alarm-cleared automation. A key on the phone is ignored, because the trunk used in testing did not deliver it.
 6. **PhoneStar / Swisscom.** Provider-specific settings (server, registration, proxy, transport, number format) are not built in. The app expects a normal SIP registration and numbers in international form (`+41...`).
 7. **Who can trigger a call.** Port 8099 is published on the host. Without `api_token`, any device on the LAN can start calls. Set a token before real use.
 8. **One call at a time.** One alarm run places one call at a time. Numbers are dialed in order, not in parallel.
@@ -85,15 +85,15 @@ These points were assumed while writing the app and still need a check on a real
 
 1. Install Piper and confirm a TTS entity.
 2. Install the app, enter the SIP account and your own number, start it, and read the log.
-3. Run `rest_command.sip_alarm_call` from Developer Tools. Do you hear the message? Does key 1 stop the calls?
-4. Only then connect Alarmo, and test the repeats and `/stop`.
+3. Run `rest_command.sip_alarm_call` from Developer Tools. Do you hear the message? Does **Stop alarm calls** hang up and end the retries?
+4. Only then connect Alarmo, and test the repeats and the stop button.
 5. Keep an independent path as well, such as a push notification from the Home Assistant Companion app.
 
 ## Checklist
 
 Checklist for this app on a real Home Assistant system. Check an item by changing `- [ ]` to `- [x]` once that behavior has been seen working. Add a new line the same way.
 
-Checked items below are ones already observed while installing and placing calls. Anything still open has not been confirmed, including the acknowledge key.
+Checked items below are ones already observed while installing and placing calls. Anything still open has not been confirmed, including the stop button.
 
 ### Done
 
@@ -101,15 +101,13 @@ Checked items below are ones already observed while installing and placing calls
 - [x] The app process starts and listens on port 8099
 - [x] `rest_command.sip_alarm_call` to `http://127.0.0.1:8099/alarm` places an outbound call
 - [x] The phone rings and the spoken message is played
-- [x] Missed acknowledgement causes another call after the retry pause
+- [x] After a round, another call follows the retry pause
 
 ### Still to confirm
 
-- [ ] After a rebuild of version 0.2.6, the log contains `SIP Alarm Caller 0.2.6 bereit auf Port 8099`
-- [ ] When the phone is answered, the log contains `Anruf verbunden, warte auf Taste 1`
-- [ ] Pressing 1 stops the retries
-- [ ] The log contains `Quittiert mit Taste 1` or `Tastenton erkannt: 1`
-- [ ] `rest_command.sip_alarm_stop` hangs up and ends the alarm run
+- [ ] After a rebuild of version 0.2.7, the log contains `SIP Alarm Caller 0.2.7 bereit auf Port 8099`
+- [ ] When the phone is answered, the log contains `Anruf verbunden, spiele Nachricht.`
+- [ ] **Stop alarm calls** (`button.stop_alarm_calls`) hangs up and the log contains `Anrufe gestoppt.`
 - [ ] An Alarmo trigger starts the calls, and clearing the alarm stops them
 - [ ] With `api_token` set, a request without the bearer token is rejected
 - [ ] TCP and TLS transports register and place a call

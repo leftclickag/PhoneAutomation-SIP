@@ -3,7 +3,8 @@ English | [Deutsch](https://github.com/leftclickag/PhoneAutomation-SIP/blob/main
 # SIP Alarm Caller
 
 Places a call over a SIP trunk (for example PhoneStar) when an alarm fires and speaks a TTS message.
-Repeats the calls until someone presses the acknowledge key (default `1`).
+Repeats the calls until someone presses **Stop alarm calls** in Home Assistant, or until `max_rounds` is reached.
+A key on the phone does not stop the calls.
 
 ## Configuration
 
@@ -16,7 +17,6 @@ Repeats the calls until someone presses the acknowledge key (default `1`).
 | `tts_engine` | TTS entity in Home Assistant, for example `tts.piper` (install the Piper app) |
 | `ring_timeout` | Seconds before an unanswered call is given up |
 | `retry_interval` / `max_rounds` | Pause between rounds / maximum rounds |
-| `ack_digit` | Key that stops the retries, default `1` |
 | `api_token` | optional; when set, requests need `Authorization: Bearer <token>` |
 
 ## Home Assistant wiring
@@ -39,7 +39,17 @@ rest_command:
     method: POST
     # headers:
     #   Authorization: "Bearer YOUR_API_TOKEN"
+
+template:
+  - button:
+      - name: Stop alarm calls
+        unique_id: sip_alarm_caller_stop
+        icon: mdi:phone-hangup
+        press:
+          - action: rest_command.sip_alarm_stop
 ```
+
+Restart Home Assistant after saving. The button entity is `button.stop_alarm_calls`. Add it to a dashboard with a Button card. Pressing it hangs up and ends the retries. The spoken message is unchanged, so remove any "press 1" sentence from `default_message` in the app configuration. A previously saved message is kept until you edit it.
 
 Automations:
 
@@ -51,9 +61,9 @@ automation:
         entity_id: alarm_control_panel.alarmo
         to: triggered
     action:
-      - service: rest_command.sip_alarm_call
+      - action: rest_command.sip_alarm_call
         data:
-          message: "Warning. An alarm was triggered. Press 1 to acknowledge."
+          message: "Warning. An alarm was triggered."
 
   - alias: Alarm cleared -> stop calls
     trigger:
@@ -61,7 +71,7 @@ automation:
         entity_id: alarm_control_panel.alarmo
         from: triggered
     action:
-      - service: rest_command.sip_alarm_stop
+      - action: rest_command.sip_alarm_stop
 ```
 
-Test without an alarm: Developer Tools → Actions → `rest_command.sip_alarm_call`.
+Test without an alarm: Developer Tools → Actions → `rest_command.sip_alarm_call`. Then press **Stop alarm calls**.

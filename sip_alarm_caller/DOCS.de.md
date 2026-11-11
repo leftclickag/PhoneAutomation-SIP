@@ -3,7 +3,8 @@
 # SIP Alarm Caller
 
 Ruft bei einem Alarm per SIP-Trunk (z.B. PhoneStar) an und spricht einen TTS-Text.
-Wiederholt die Anrufe, bis jemand die Quittiertaste (Standard `1`) drückt.
+Wiederholt die Anrufe, bis jemand in Home Assistant auf **Stop alarm calls** drückt oder `max_rounds` erreicht ist.
+Eine Taste am Telefon beendet die Anrufe nicht.
 
 Home Assistant zeigt im Dokumentations-Tab die englische `DOCS.md`. Diese Datei ist die deutsche Fassung.
 
@@ -18,7 +19,6 @@ Home Assistant zeigt im Dokumentations-Tab die englische `DOCS.md`. Diese Datei 
 | `tts_engine` | TTS-Entity in HA, z.B. `tts.piper` (Piper-App installieren) |
 | `ring_timeout` | Sekunden, bis ein Anruf als unbeantwortet gilt |
 | `retry_interval` / `max_rounds` | Pause zwischen Runden / maximale Runden |
-| `ack_digit` | Taste, die die Wiederholungen beendet, Standard `1` |
 | `api_token` | optional, dann `Authorization: Bearer <token>` nötig |
 
 ## Home-Assistant-Einbindung
@@ -41,7 +41,17 @@ rest_command:
     method: POST
     # headers:
     #   Authorization: "Bearer DEIN_API_TOKEN"
+
+template:
+  - button:
+      - name: Stop alarm calls
+        unique_id: sip_alarm_caller_stop
+        icon: mdi:phone-hangup
+        press:
+          - action: rest_command.sip_alarm_stop
 ```
+
+Nach dem Speichern Home Assistant neu starten. Die Button-Entity heißt `button.stop_alarm_calls`. Auf einem Dashboard als Button-Karte hinzufügen. Ein Druck legt auf und beendet die Wiederholungen. Der gesprochene Text bleibt, wie er in der App-Konfiguration steht. Einen alten Satz wie „Taste 1 drücken“ dort aus `default_message` entfernen. Ein bereits gespeicherter Text bleibt, bis er geändert wird.
 
 Automationen:
 
@@ -53,9 +63,9 @@ automation:
         entity_id: alarm_control_panel.alarmo
         to: triggered
     action:
-      - service: rest_command.sip_alarm_call
+      - action: rest_command.sip_alarm_call
         data:
-          message: "Achtung! Es wurde eingebrochen. Alarm! Taste 1 drücken zum Quittieren."
+          message: "Achtung! Es wurde ein Alarm ausgelöst."
 
   - alias: Alarm aus -> Anrufe stoppen
     trigger:
@@ -63,7 +73,7 @@ automation:
         entity_id: alarm_control_panel.alarmo
         from: triggered
     action:
-      - service: rest_command.sip_alarm_stop
+      - action: rest_command.sip_alarm_stop
 ```
 
-Test ohne Alarm: Entwicklerwerkzeuge → Aktionen → `rest_command.sip_alarm_call`.
+Test ohne Alarm: Entwicklerwerkzeuge → Aktionen → `rest_command.sip_alarm_call`. Danach **Stop alarm calls** drücken.
