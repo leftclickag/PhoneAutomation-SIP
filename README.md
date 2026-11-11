@@ -1,27 +1,29 @@
+English | [Deutsch](README.de.md)
+
 # PhoneAutomation-SIP
 
-Home-Assistant-Add-on der Leftclick AG: Ruft bei einem Alarm (z.B. aus [Alarmo](https://github.com/nielsfaber/alarmo)) über einen eigenen SIP-Anbieter (z.B. PhoneStar, Swisscom) an, spricht einen Text per Text-to-Speech und wiederholt die Anrufe, bis jemand per Tastendruck quittiert. Eine Alternative zu Twilio ohne Kosten pro Nachricht.
+Home Assistant app by Leftclick AG. When an alarm fires (for example from [Alarmo](https://github.com/nielsfaber/alarmo)), it calls a phone through your own SIP provider, speaks a text-to-speech message, and repeats the calls until someone acknowledges with a keypress. An alternative to Twilio without a fee per call.
 
-> **Status: experimentell und ungetestet.** Der Code ist geschrieben, aber noch nicht gegen einen echten SIP-Trunk, nicht in einem Docker-Build und nicht in Home Assistant gelaufen. Nicht als alleiniges Alarmierungssystem verwenden, bis es erfolgreich getestet wurde.
+> **Status: the call works, acknowledgement is not confirmed yet.** The app installs on Home Assistant and places a real SIP call. Pressing the acknowledge key has not been confirmed to stop the retries. Do not use it as the only alarm path. Open checks are in [Checklist](#checklist).
 
-Das Add-on liegt in [`sip_alarm_caller/`](sip_alarm_caller/). Konfiguration und Home-Assistant-Einbindung stehen in [`sip_alarm_caller/DOCS.md`](sip_alarm_caller/DOCS.md).
+The app lives in [`sip_alarm_caller/`](sip_alarm_caller/). Configuration and the Home Assistant wiring are in [`sip_alarm_caller/DOCS.md`](sip_alarm_caller/DOCS.md).
 
 ## Installation
 
-> **Namenshinweis:** Ab Home Assistant 2026.2 heißen „Add-ons" in der Oberfläche **„Apps"** (der Store heißt „App Store", lokale Apps erscheinen unter „Local apps"). Ab Supervisor 2026.6 heißt der lokale Ordner auf dem Gerät **`local_apps`** statt `addons`. Beide Namen sind unten berücksichtigt — je nach Home-Assistant-Version den jeweils aktuellen Pfad verwenden. Die folgenden Schritte gelten für Home Assistant OS bzw. Supervised; Home Assistant Container und Core unterstützen keine Apps/Add-ons.
+> **Name change:** From Home Assistant 2026.2, "add-ons" are called **Apps** in the UI (the store is the App Store, and local apps appear under Local apps). From Supervisor 2026.6 the local folder on the device is **`local_apps`** instead of `addons`. Both names are covered below. Use the path that matches your version. These steps are for Home Assistant OS or Supervised. Home Assistant Container and Core cannot run apps.
 
-### Variante A: Öffentliches Repo (empfohlen, wenn das Repo auf GitHub öffentlich ist)
+### Option A: Public repository (preferred)
 
-1. Home Assistant öffnen → **Einstellungen → Apps** → dort **„Install app"** anklicken → der **App Store** öffnet sich.
-2. Oben rechts aufs **⋯-Menü** klicken → **Repositories**.
-3. URL `https://github.com/leftclickag/PhoneAutomation-SIP` einfügen → **Hinzufügen**.
-4. Zurück im Store: Seite ggf. mit **Strg+F5** neu laden, dann **SIP Alarm Caller** öffnen → **Installieren**.
+1. Open Home Assistant → **Settings → Apps** → **Install app**. The App Store opens.
+2. Open the **⋯ menu** at the top right → **Repositories**.
+3. Paste `https://github.com/leftclickag/PhoneAutomation-SIP` → **Add**.
+4. Back in the store, hard-reload the page (**Ctrl+F5**), open **SIP Alarm Caller** → **Install**.
 
-### Variante B: Lokal per SSH (funktioniert auch bei privatem Repo)
+### Option B: Local copy over SSH
 
-Voraussetzung: Die App **„Terminal & SSH"** ist installiert (Einstellungen → Apps). Dann:
+The **Terminal & SSH** app must be installed (Settings → Apps). Then:
 
-1. Die 5 Dateien aus [`sip_alarm_caller/`](sip_alarm_caller/) (`config.yaml`, `Dockerfile`, `run.sh`, `app.py`, `DOCS.md`) in einen Ordner `sip_alarm_caller` im lokalen Ordner des Geräts kopieren. Die Struktur muss so aussehen:
+1. Copy the app files from [`sip_alarm_caller/`](sip_alarm_caller/) (`config.yaml`, `Dockerfile`, `run.sh`, `app.py`, `DOCS.md`) into a `sip_alarm_caller` folder in the device's local apps directory:
 
    ```
    /local_apps/sip_alarm_caller/config.yaml
@@ -31,64 +33,90 @@ Voraussetzung: Die App **„Terminal & SSH"** ist installiert (Einstellungen →
    /local_apps/sip_alarm_caller/DOCS.md
    ```
 
-   Im Terminal der SSH-App (mit Schlüssel bzw. Passwort angemeldet) z.B.:
+   From the SSH app terminal, for example:
 
    ```bash
    mkdir -p /local_apps/sip_alarm_caller
-   # Dateien übertragen, z.B. per scp vom eigenen PC:
+   # Copy the files, for example with scp from your PC:
    # scp C:\GitHub\PhoneAutomation-SIP\sip_alarm_caller\* root@homeassistant.local:/local_apps/sip_alarm_caller/
    ls /local_apps/sip_alarm_caller
    ```
 
-   **Wichtig:** Der Ordner muss **direkt** in `local_apps` liegen. Ein verschachtelter Pfad wie `local_apps/PhoneAutomation-SIP/sip_alarm_caller/` wird nicht gefunden. Bei älteren Installationen (vor Supervisor 2026.6) heißt der Ordner `/addons` statt `/local_apps` — dort hinein kopieren, falls `local_apps` nicht existiert.
+   The folder must sit **directly** in `local_apps`. A nested path such as `local_apps/PhoneAutomation-SIP/sip_alarm_caller/` is ignored. On installations older than Supervisor 2026.6 the folder is `/addons` instead of `/local_apps`. Copy into that directory if `local_apps` does not exist.
 
-2. Home Assistant öffnen → **Einstellungen → Apps → „Install app"** (App Store).
-3. Oben rechts im **⋯-Menü** → **Nach Updates suchen**.
-4. **Seite mit Strg+F5 hart neu laden** — der Store cachet sonst oft noch den alten Stand.
-5. Ein neuer Abschnitt **„Local apps"** erscheint (ganz oben) mit **SIP Alarm Caller** → anklicken → **Installieren**. Der erste Start baut das Docker-Image aus dem Dockerfile, das dauert einen Moment.
-6. Klappt Schritt 5 nicht: Gerät neu starten (Einstellungen → System) und erneut prüfen.
+2. Open Home Assistant → **Settings → Apps → Install app** (App Store).
+3. **⋯ menu** → **Check for updates**.
+4. **Hard-reload with Ctrl+F5**. The store often keeps the previous list.
+5. A **Local apps** section appears at the top with **SIP Alarm Caller** → open it → **Install**. The first start builds the Docker image from the Dockerfile.
+6. If step 5 does not show the app, reboot the device (Settings → System) and check again.
 
-### Variante B alternativ: Lokal per Samba-Freigabe
+### Option B via Samba
 
-Wenn die App **„Samba share"** läuft, im Windows-Explorer `\\homeassistant.local\local_apps` öffnen (ältere Samba-App-Versionen: `\\homeassistant.local\addons` — beide Namen zeigen auf denselben Ordner), dort den Ordner `sip_alarm_caller` mit den 5 Dateien anlegen wie oben. Achtung: Der Datei-Editor und Studio Code Server sehen nur `/config`, **nicht** `local_apps` — zum Kopieren Samba oder SSH verwenden.
+If the **Samba share** app is running, open `\\homeassistant.local\local_apps` in Explorer (older Samba versions: `\\homeassistant.local\addons`. Both names point at the same folder) and create `sip_alarm_caller` with the five files above. The File Editor and Studio Code Server only see `/config`, not `local_apps`. Use Samba or SSH to copy.
 
-### Nach der Installation (gilt für beide Varianten)
+### After installation (both options)
 
-1. App öffnen → Tab **Konfiguration**: SIP-Zugangsdaten eintragen (`sip_server`, `sip_user`, `sip_password`), Zielnummern im Format `+41791234567`, ggf. `tts_engine` prüfen (Standard `tts.piper`, siehe DOCS.md) → **Speichern**.
-2. **Start** drücken (und „Beim Booten starten" aktivieren).
-3. Tab **Log** öffnen: Ist die SIP-Registrierung erfolgreich? (Siehe „Empfohlener Testablauf" unten.)
-4. Fehlerhafte App-Konfiguration wird im Store **still übersprungen** — im Zweifel unter **Einstellungen → System → Logs → Dropdown oben rechts → „Supervisor"** nach Warnungen zu `sip_alarm_caller` suchen.
+1. Open the app → **Configuration**: enter the SIP account (`sip_server`, `sip_user`, `sip_password`) and the target numbers as `+41791234567`. Check `tts_engine` (default `tts.piper`, see DOCS.md) → **Save**.
+2. Press **Start** (and enable start on boot).
+3. Open **Log** and confirm the SIP registration succeeded.
+4. A broken app configuration is **skipped silently** by the store. If the app does not appear, open **Settings → System → Logs**, choose **Supervisor** in the top-right dropdown, and look for warnings about `sip_alarm_caller`.
 
-## Voraussetzungen
+## Requirements
 
-- **Home Assistant OS** (oder Supervised) mit Add-on-Unterstützung. Gedacht für den Home Assistant Green (`aarch64`), `amd64` ist zusätzlich eingetragen. Home Assistant Container und Core unterstützen keine Add-ons.
-- **SIP-Zugang** mit Outbound-Calls: Server/Domain, User und Passwort. Der Anbieter muss Anrufe in die Zielnetze erlauben, G.711 (PCMA/PCMU) unterstützen und je nach Bedarf eine eigene Absendernummer (CLIP) zulassen.
-- **Text-to-Speech** in Home Assistant, empfohlen das **Piper-Add-on** (lokal, kostenlos, deutsche Stimmen). Alternativ funktioniert jede TTS-Entity, z.B. Home Assistant Cloud.
-- **Netzwerk:** Das Add-on läuft im Host-Netzwerk. Ausgehend müssen SIP (meist UDP/TCP 5060 bzw. TLS 5061) und die RTP-Audioports des Anbieters erreichbar sein.
+- **Home Assistant OS** (or Supervised). Aimed at Home Assistant Green (`aarch64`). `amd64` is listed as well. Home Assistant Container and Core cannot install apps.
+- **A SIP account that can place outbound calls:** server, user, and password. The provider must allow calls to the destination networks, support G.711 (PCMA/PCMU), and allow the caller ID you need.
+- **Text-to-speech** in Home Assistant. The local **Piper** app is the recommended choice. Any other TTS entity works too, including Home Assistant Cloud.
+- **Network:** the app uses the host network. Outbound SIP (usually UDP/TCP 5060 or TLS 5061) and the provider's RTP audio ports must be reachable.
 
-## Annahmen (nicht verifiziert)
+## What is still assumed
 
-Folgendes wurde beim Schreiben angenommen und muss beim ersten Test geprüft werden:
+These points were assumed while writing the app and still need a check on a real system. Tick them off in the [checklist](#checklist).
 
-1. **pjsua-Steuerung:** Die SIP-Engine ist **pjsua** (PJSIP), gestartet mit Telnet-CLI (`--use-cli`, `--cli-telnet-port`) und Log-Level 5. Anruf- und Registrierungsereignisse werden aus dem Log geparst („Call N state changed to", „registration success/failed"). DTMF über SIP steht in der Zeile „Incoming DTMF on call N: X, using … method".
-2. **Pakete:** `pjsua`, `py3-aiohttp` und `ffmpeg` sind in Alpine 3.24 (Basis des HA-Base-Images) enthalten. **baresip ist dort nicht verfügbar** (nur in Alpine edge/testing) — deshalb wurde auf pjsua umgestellt. Der Docker-Build auf dem Gerät muss den ersten echten Test ersetzen.
-3. **TTS über die HA-API:** `POST http://supervisor/core/api/tts_get_url` mit `homeassistant_api: true` liefert ein Feld `path`, das sich vom gleichen Proxy herunterladen lässt.
-4. **Piper-Standardwerte:** Die Entity `tts.piper` und die Sprache `de_DE` sind Platzhalter. Der tatsächliche Name steht in Home Assistant unter Einstellungen → Geräte & Dienste → Wyoming-Protokoll.
-5. **Quittierung:** Die eingestellte Taste (Standard `1`) beendet die Wiederholungen. Erkannt wird sie sowohl als SIP-DTMF (RFC 2833/4733 oder SIP INFO) als auch als Ton im zurückkommenden Audio, falls das Mobilnetz die Taste nur hörbar überträgt.
-6. **PhoneStar / Swisscom:** Die anbieterspezifischen Einstellungen (SIP-Server, Registrierung, Proxy, Transport, Rufnummernformat) sind nicht bekannt. Der Code nimmt Standard-SIP mit Registrierung und Nummern im internationalen Format (`+41...`) an.
-7. **Erreichbarkeit der Schnittstelle:** Port 8099 wird am Host freigegeben und ist im lokalen Netz erreichbar. Ohne `api_token` kann jedes Gerät im Netz Anrufe auslösen. Für den produktiven Einsatz einen Token setzen.
-8. **Mehrere Anrufe:** Es läuft immer nur ein Alarmablauf mit einem Anruf gleichzeitig. Die Nummern werden nacheinander angerufen, nicht parallel.
+1. **pjsua control.** The SIP engine is **pjsua** (PJSIP), started with a telnet CLI (`--use-cli`, `--cli-telnet-port`) and log level 5. Call and registration events are parsed from the log (`Call N state changed to`, `registration success/failed`). SIP DTMF is the line `Incoming DTMF on call N: X, using … method`. pjsua's stdout is a pipe, so the app starts it with `--stdout-no-buf`. Without that flag the answer and keypress lines stay buffered and the app never sees them.
+2. **Packages.** `pjsua`, `py3-aiohttp`, and `ffmpeg` are in Alpine 3.24, which is the Home Assistant base image. **baresip is not** (it exists only in Alpine edge/testing), which is why the app uses pjsua.
+3. **TTS through the HA API.** `POST http://supervisor/core/api/tts_get_url` with `homeassistant_api: true` returns a `path` that can be downloaded from the same proxy.
+4. **Piper defaults.** The entity `tts.piper` and the language `de_DE` are placeholders. The real entity name is under Settings → Devices & services → Wyoming Protocol.
+5. **Acknowledgement.** The configured key (default `1`) should stop the retries. It is accepted both as SIP DTMF (RFC 2833/4733 or SIP INFO) and as a tone in the audio coming back from the phone, because many mobile networks only forward the key as sound.
+6. **PhoneStar / Swisscom.** Provider-specific settings (server, registration, proxy, transport, number format) are not built in. The app expects a normal SIP registration and numbers in international form (`+41...`).
+7. **Who can trigger a call.** Port 8099 is published on the host. Without `api_token`, any device on the LAN can start calls. Set a token before real use.
+8. **One call at a time.** One alarm run places one call at a time. Numbers are dialed in order, not in parallel.
 
-## Empfohlener Testablauf
+## Suggested test
 
-1. Piper installieren und eine TTS-Entity prüfen.
-2. Add-on installieren, SIP-Daten und eine eigene Nummer eintragen, starten und das Add-on-Log lesen (Registrierung erfolgreich?).
-3. `rest_command.sip_alarm_call` aus den Entwicklerwerkzeugen auslösen. Hört man den Text? Funktioniert die Taste 1?
-4. Erst danach Alarmo anbinden, Wiederholungen und `/stop` testen.
-5. Zusätzlich einen unabhängigen Weg behalten, z.B. die Push-Benachrichtigung der HA-Companion-App.
+1. Install Piper and confirm a TTS entity.
+2. Install the app, enter the SIP account and your own number, start it, and read the log.
+3. Run `rest_command.sip_alarm_call` from Developer Tools. Do you hear the message? Does key 1 stop the calls?
+4. Only then connect Alarmo, and test the repeats and `/stop`.
+5. Keep an independent path as well, such as a push notification from the Home Assistant Companion app.
 
-## Lizenz
+## Checklist
 
-[MIT](LICENSE). Die Nutzung erfolgt auf eigenes Risiko, es gibt keine Gewährleistung, auch nicht für die Zuverlässigkeit als Alarmierungssystem.
+Checklist for this app on a real Home Assistant system. Check an item by changing `- [ ]` to `- [x]` once that behavior has been seen working. Add a new line the same way.
+
+Checked items below are ones already observed while installing and placing calls. Anything still open has not been confirmed, including the acknowledge key.
+
+### Done
+
+- [x] The image builds on Home Assistant OS (`aarch64`) with `pjsua` from Alpine 3.24
+- [x] The app process starts and listens on port 8099
+- [x] `rest_command.sip_alarm_call` to `http://127.0.0.1:8099/alarm` places an outbound call
+- [x] The phone rings and the spoken message is played
+- [x] Missed acknowledgement causes another call after the retry pause
+
+### Still to confirm
+
+- [ ] After a rebuild of version 0.2.2, the log contains `SIP Alarm Caller 0.2.2 bereit auf Port 8099`
+- [ ] When the phone is answered, the log contains `Anruf verbunden, warte auf Taste 1`
+- [ ] Pressing 1 stops the retries
+- [ ] The log contains `Quittiert mit Taste 1` or `Tastenton erkannt: 1`
+- [ ] `rest_command.sip_alarm_stop` hangs up and ends the alarm run
+- [ ] An Alarmo trigger starts the calls, and clearing the alarm stops them
+- [ ] With `api_token` set, a request without the bearer token is rejected
+- [ ] TCP and TLS transports register and place a call
+- [ ] Several numbers are dialed one after another in one round
+
+## License
+
+[MIT](LICENSE). Use is at your own risk. There is no warranty, including for use as an alarm system.
 
 &copy; Leftclick AG

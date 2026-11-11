@@ -1,26 +1,29 @@
+English | [Deutsch](https://github.com/leftclickag/PhoneAutomation-SIP/blob/main/sip_alarm_caller/DOCS.de.md)
+
 # SIP Alarm Caller
 
-Ruft bei einem Alarm per SIP-Trunk (z.B. PhoneStar) an und spricht einen TTS-Text.
-Wiederholt die Anrufe, bis jemand die Quittiertaste (Standard `1`) drückt.
+Places a call over a SIP trunk (for example PhoneStar) when an alarm fires and speaks a TTS message.
+Repeats the calls until someone presses the acknowledge key (default `1`).
 
-## Konfiguration
+## Configuration
 
-| Option | Bedeutung |
+| Option | Meaning |
 |---|---|
-| `sip_server` | SIP-Domain/Registrar laut PhoneStar |
-| `sip_user` / `sip_password` / `sip_auth_user` | SIP-Zugangsdaten (`sip_auth_user` nur, falls abweichend) |
+| `sip_server` | SIP domain / registrar from the provider |
+| `sip_user` / `sip_password` / `sip_auth_user` | SIP credentials (`sip_auth_user` only when it differs from the user) |
 | `sip_outbound_proxy` | optional |
-| `numbers` | Zielnummern im Format `+41791234567`, werden der Reihe nach angerufen |
-| `tts_engine` | TTS-Entity in HA, z.B. `tts.piper` (Piper-Add-on installieren) |
-| `ring_timeout` | Sekunden, bis ein Anruf als unbeantwortet gilt |
-| `retry_interval` / `max_rounds` | Pause zwischen Runden / maximale Runden |
-| `api_token` | optional, dann `Authorization: Bearer <token>` nötig |
+| `numbers` | Destination numbers as `+41791234567`, dialed in order |
+| `tts_engine` | TTS entity in Home Assistant, for example `tts.piper` (install the Piper app) |
+| `ring_timeout` | Seconds before an unanswered call is given up |
+| `retry_interval` / `max_rounds` | Pause between rounds / maximum rounds |
+| `ack_digit` | Key that stops the retries, default `1` |
+| `api_token` | optional; when set, requests need `Authorization: Bearer <token>` |
 
-## Home-Assistant-Einbindung
+## Home Assistant wiring
 
-In `configuration.yaml` `127.0.0.1` verwenden, nicht `localhost`. Home Assistant löst `localhost` oft als IPv6 (`::1`) auf, die App hört aber auf IPv4, und der Aufruf endet mit „Client error occurred when calling resource“. `127.0.0.1` trifft den Host direkt, weil Home Assistant Core und diese App im Host-Netz laufen.
+In `configuration.yaml`, use `127.0.0.1`, not `localhost`. Home Assistant often resolves `localhost` to IPv6 (`::1`). The app listens on IPv4, so `localhost` fails with "Client error occurred when calling resource". `127.0.0.1` reaches the host directly, because Home Assistant Core and this app both use the host network.
 
-Die App muss laufen. Im App-Log muss `SIP Alarm Caller bereit auf Port 8099` stehen. Fehlt `sip_server` oder `numbers`, beendet sich die App vorher und der Port bleibt zu. Ist `api_token` gesetzt, denselben Wert im Header `Authorization` mitschicken.
+The app must be running. The log must contain `bereit auf Port 8099`. If `sip_server` or `numbers` is missing, the app exits before it opens the port. If `api_token` is set, send the same value in the `Authorization` header.
 
 ```yaml
 rest_command:
@@ -30,19 +33,19 @@ rest_command:
     content_type: "application/json"
     payload: '{"message": "{{ message }}"}'
     # headers:
-    #   Authorization: "Bearer DEIN_API_TOKEN"
+    #   Authorization: "Bearer YOUR_API_TOKEN"
   sip_alarm_stop:
     url: "http://127.0.0.1:8099/stop"
     method: POST
     # headers:
-    #   Authorization: "Bearer DEIN_API_TOKEN"
+    #   Authorization: "Bearer YOUR_API_TOKEN"
 ```
 
-Automationen:
+Automations:
 
 ```yaml
 automation:
-  - alias: Alarm -> Anruf
+  - alias: Alarm -> call
     trigger:
       - platform: state
         entity_id: alarm_control_panel.alarmo
@@ -50,9 +53,9 @@ automation:
     action:
       - service: rest_command.sip_alarm_call
         data:
-          message: "Achtung! Es wurde eingebrochen. Alarm! Taste 1 drücken zum Quittieren."
+          message: "Warning. An alarm was triggered. Press 1 to acknowledge."
 
-  - alias: Alarm aus -> Anrufe stoppen
+  - alias: Alarm cleared -> stop calls
     trigger:
       - platform: state
         entity_id: alarm_control_panel.alarmo
@@ -61,4 +64,4 @@ automation:
       - service: rest_command.sip_alarm_stop
 ```
 
-Test ohne Alarm: Developer Tools -> Aktionen -> `rest_command.sip_alarm_call`.
+Test without an alarm: Developer Tools → Actions → `rest_command.sip_alarm_call`.
