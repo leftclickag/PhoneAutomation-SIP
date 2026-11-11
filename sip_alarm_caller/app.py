@@ -1,7 +1,15 @@
-"""SIP Alarm Caller: HTTP-Trigger -> TTS -> baresip-Anruf, Wiederholung bis DTMF-Quittierung."""
+"""SIP Alarm Caller: HTTP-Trigger -> TTS -> pjsua-Anruf, Wiederholung bis DTMF-Quittierung.
+
+Steuerung: pjsua (PJSIP) laeuft als Unterprozess mit Telnet-CLI. Anruf-/Registrierungs-
+Ereignisse werden aus dem stdout-Log (Log-Level 5) geparst:
+- "Call N state changed to CONFIRMED/DISCONNCTD"  (pjsua_app.c, on_call_state)
+- "Received DTMF digit X, vol=..."                (pjmedia/stream.c, RFC 2833, Level 5)
+- "registration success/failed, status=N"         (pjsua_acc.c, on_reg_state)
+"""
 import asyncio
 import json
 import os
+import re
 import wave
 
 import aiohttp
@@ -10,83 +18,158 @@ from aiohttp import web
 OPTIONS = json.load(open("/data/options.json"))
 SUPERVISOR_TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 HA_API = "http://supervisor/core"
-BARESIP_DIR = "/data/baresip"
 MSG_WAV = "/tmp/message.wav"
-CTRL_PORT = 4444
+CLI_PORT = 5556
+
+RE_REG = re.compile(r"registration (success|failed), status=(\d+)")
+RE_CALL_STATE = re.compile(r"Call (\d+) state changed to (\S+)")
+RE_DTMF = re.compile(r"Received DTMF digit (\S),|Incoming DTMF digit (\S)")
 
 
 def log(*a):
     print(*a, flush=True)
 
 
-# ---------------------------------------------------------------- baresip
-
-def write_baresip_config():
-    o = OPTIONS
-    os.makedirs(BARESIP_DIR, exist_ok=True)
-    user = o["sip_user"]
-    auth = o.get("sip_auth_user") or user
-    acc = f'<sip:{user}@{o["sip_server"]};transport={o["sip_transport"]}>;auth_user={auth};auth_pass={o["sip_password"]};regint=300'
-    if o.get("sip_outbound_proxy"):
-        acc += f';outbound="sip:{o["sip_outbound_proxy"]};transport={o["sip_transport"]}"'
-    with open(f"{BARESIP_DIR}/accounts", "w") as f:
-        f.write(acc + "\n")
-    with open(f"{BARESIP_DIR}/config", "w") as f:
-        f.write(
-            "module_path /usr/lib/baresip/modules\n"
-            "module g711.so\nmodule aufile.so\nmodule nullaudio.so\n"
-            "module menu.so\nmodule account.so\nmodule ctrl_tcp.so\n"
-            f"ctrl_tcp_listen 127.0.0.1:{CTRL_PORT}\n"
-            f"audio_source aufile,{MSG_WAV}\n"
-            "audio_player nullaudio,\naudio_alert nullaudio,\n"
-            "audio_codecs PCMA,PCMU\n"
-        )
+def write_silence(path, seconds=1):
+    """Platzhalter-WAV (8 kHz mono s16), damit pjsua beim Start einen Player anlegen kann."""
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(8000)
+        w.writeframes(b"\x00\x00" * 8000 * seconds)
 
 
-def netstring(obj):
-    data = json.dumps(obj).encode()
-    return str(len(data)).encode() + b":" + data + b","
+# ---------------------------------------------------------------- pjsua
 
-
-class Baresip:
+class Pjsua:
     def __init__(self):
         self.events = asyncio.Queue()
-        self.writer = None
         self.proc = None
+        self.telnet = None
+        self.wav = None
 
-    async def start(self):
-        write_baresip_config()
-        self.proc = await asyncio.create_subprocess_exec("baresip", "-f", BARESIP_DIR)
-        for _ in range(30):
+    def args(self):
+        o = OPTIONS
+        auth = o.get("sip_auth_user") or o["sip_user"]
+        transport = o["sip_transport"]
+        tparam = "" if transport == "udp" else f";transport={transport}"
+        args = [
+            "pjsua",
+            f"--id=sip:{o['sip_user']}@{o['sip_server']}{tparam}",
+            f"--registrar=sip:{o['sip_server']}{tparam}",
+            "--realm=*",
+            f"--username={auth}",
+            f"--password={o['sip_password']}",
+            "--null-audio",
+            f"--play-file={self.wav}",
+            "--auto-play",
+            "--max-calls=1",
+            "--log-level=5",
+            "--app-log-level=5",
+            "--use-cli",
+            f"--cli-telnet-port={CLI_PORT}",
+            "--no-cli-console",
+        ]
+        if transport == "tcp":
+            args.append("--no-udp")
+        elif transport == "tls":
+            args.append("--use-tls")
+        if o.get("sip_outbound_proxy"):
+            args.append(f"--proxy=sip:{o['sip_outbound_proxy']}{tparam}")
+        return args
+
+    async def start(self, wav):
+        self.wav = wav
+        self.proc = await asyncio.create_subprocess_exec(
+            *self.args(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT)
+        asyncio.create_task(self._read_log(self.proc.stdout))
+        for _ in range(60):
+            if self.proc.returncode is not None:
+                raise RuntimeError(f"pjsua wurde beendet (rc={self.proc.returncode})")
             try:
-                reader, self.writer = await asyncio.open_connection("127.0.0.1", CTRL_PORT)
+                reader, self.telnet = await asyncio.open_connection("127.0.0.1", CLI_PORT)
                 break
             except OSError:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.5)
         else:
-            raise RuntimeError("baresip ctrl_tcp nicht erreichbar")
-        asyncio.create_task(self._read(reader))
-
-    async def _read(self, reader):
-        while True:
-            length = b""
-            while True:
-                c = await reader.readexactly(1)
-                if c == b":":
-                    break
-                length += c
-            payload = await reader.readexactly(int(length) + 1)
+            raise RuntimeError("pjsua-CLI (Telnet) nicht erreichbar")
+        asyncio.create_task(self._drain_telnet(reader))
+        log("pjsua gestartet, warte auf SIP-Registrierung ...")
+        for _ in range(20):
             try:
-                msg = json.loads(payload[:-1])
-            except ValueError:
+                ev = await asyncio.wait_for(self.events.get(), 0.5)
+            except asyncio.TimeoutError:
+                if self.proc.returncode is not None:
+                    raise RuntimeError("pjsua wurde beendet")
                 continue
-            if msg.get("event"):
-                log("baresip event:", msg.get("type"), msg.get("param", ""))
-                await self.events.put(msg)
+            if ev.get("type") == "REG_OK":
+                log("SIP-Registrierung erfolgreich.")
+                break
+            if ev.get("type") == "REG_FAIL":
+                log("WARNUNG: SIP-Registrierung fehlgeschlagen (Status", ev.get("param"), "). Anruf wird trotzdem versucht.")
+                break
+        else:
+            log("Keine Registrierungs-Rueckmeldung erhalten, fahre trotzdem fort.")
 
-    async def command(self, cmd, params=""):
-        self.writer.write(netstring({"command": cmd, "params": params}))
-        await self.writer.drain()
+    async def restart(self, wav):
+        await self.stop()
+        self.events = asyncio.Queue()
+        await self.start(wav)
+
+    async def stop(self):
+        self.telnet = None
+        while not self.events.empty():
+            self.events.get_nowait()
+        if self.proc and self.proc.returncode is None:
+            self.proc.terminate()
+            try:
+                await asyncio.wait_for(self.proc.wait(), 5)
+            except asyncio.TimeoutError:
+                self.proc.kill()
+                await self.proc.wait()
+        self.proc = None
+
+    async def _read_log(self, reader):
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            text = line.decode("utf-8", "replace").rstrip()
+            m = RE_REG.search(text)
+            if m:
+                log("pjsua:", text)
+                await self.events.put({"type": "REG_OK" if m.group(1) == "success" else "REG_FAIL", "param": m.group(2)})
+                continue
+            m = RE_CALL_STATE.search(text)
+            if m:
+                t = {"CONFIRMED": "CALL_ESTABLISHED", "DISCONNCTD": "CALL_CLOSED"}.get(m.group(2))
+                if t:
+                    log("pjsua:", text)
+                    await self.events.put({"type": t})
+                continue
+            m = RE_DTMF.search(text)
+            if m:
+                digit = m.group(1) or m.group(2)
+                log("pjsua:", text)
+                await self.events.put({"type": "DTMF", "param": digit})
+
+    async def _drain_telnet(self, reader):
+        while await reader.read(4096):
+            pass
+
+    async def command(self, cmd):
+        if self.telnet is None:
+            return
+        try:
+            self.telnet.write((cmd + "\r\n").encode())
+            await self.telnet.drain()
+        except Exception as e:
+            log("pjsua-CLI-Fehler:", e)
+
+    async def hangup(self):
+        await self.command("call hangup_all")
 
     def drain_events(self):
         while not self.events.empty():
@@ -141,7 +224,7 @@ class Caller:
     async def stop(self):
         if self.running():
             self.task.cancel()
-            await self.sip.command("hangup")
+        await self.sip.hangup()
         self.acked.clear()
 
     async def run(self, message):
@@ -150,6 +233,11 @@ class Caller:
             duration = await make_audio(message or o["default_message"])
         except Exception as e:
             log("TTS-Fehler:", e)
+            return
+        try:
+            await self.sip.restart(MSG_WAV)
+        except Exception as e:
+            log("pjsua-Start fehlgeschlagen:", e)
             return
         for rnd in range(1, o["max_rounds"] + 1):
             for number in o["numbers"]:
@@ -164,8 +252,9 @@ class Caller:
         """True wenn Quittierung per DTMF erfolgte."""
         o = OPTIONS
         self.sip.drain_events()
-        target = number if number.startswith("sip:") else f'sip:{number}@{o["sip_server"]}'
-        await self.sip.command("dial", target)
+        tparam = "" if o["sip_transport"] == "udp" else f";transport={o['sip_transport']}"
+        target = number if number.startswith("sip:") else f'sip:{number}@{o["sip_server"]}{tparam}'
+        await self.sip.command(f"call new {target}")
         established = False
         deadline = asyncio.get_event_loop().time() + o["ring_timeout"]
         try:
@@ -181,12 +270,12 @@ class Caller:
                 if t == "CALL_ESTABLISHED" and not established:
                     established = True
                     deadline = asyncio.get_event_loop().time() + duration + 5
-                elif t == "CALL_DTMF_START" and ev.get("param") == o["ack_digit"]:
+                elif t == "DTMF" and ev.get("param") == o["ack_digit"]:
                     return True
                 elif t == "CALL_CLOSED":
                     return False
         finally:
-            await self.sip.command("hangup")
+            await self.sip.hangup()
             await asyncio.sleep(2)
 
 
@@ -222,11 +311,18 @@ def make_app(caller):
 
 
 async def main():
-    if not OPTIONS["sip_server"] or not OPTIONS["numbers"]:
-        raise SystemExit("sip_server und numbers muessen in der Add-on-Konfiguration gesetzt sein.")
-    sip = Baresip()
-    await sip.start()
-    runner = web.AppRunner(make_app(Caller(sip)))
+    o = OPTIONS
+    if not o["sip_server"] or not o["numbers"]:
+        raise SystemExit("sip_server und numbers muessen in der App-Konfiguration gesetzt sein.")
+    sip = Pjsua()
+    # Start mit Platzhalter-WAV: Registrierung und Konfigurationsfehler erscheinen frueh im Log.
+    write_silence("/tmp/init.wav")
+    try:
+        await sip.start("/tmp/init.wav")
+    except Exception as e:
+        log("WARNUNG: erster pjsua-Start fehlgeschlagen:", e, "- wird bei Ausloesung erneut versucht.")
+    caller = Caller(sip)
+    runner = web.AppRunner(make_app(caller))
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", 8099).start()
     log("SIP Alarm Caller bereit auf Port 8099")

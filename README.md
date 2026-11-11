@@ -70,8 +70,8 @@ Wenn die App **„Samba share"** läuft, im Windows-Explorer `\\homeassistant.lo
 
 Folgendes wurde beim Schreiben angenommen und muss beim ersten Test geprüft werden:
 
-1. **baresip-Steuerung:** Die Steuerung läuft über das Modul `ctrl_tcp`. Event-Namen (`CALL_ESTABLISHED`, `CALL_DTMF_START`, `CALL_CLOSED`), Modulnamen (`aufile`, `nullaudio`, `g711`, `menu`, `account`, `ctrl_tcp`), der Modulpfad `/usr/lib/baresip/modules` und die Config-Syntax (`audio_source aufile,...`, Account-Zeile mit `auth_user`, `auth_pass`, `outbound`) stammen aus dem Gedächtnis und können je nach baresip-Version abweichen.
-2. **Pakete:** Im Alpine-Basis-Image von Home Assistant sind `baresip`, `py3-aiohttp` und `ffmpeg` installierbar. Ein Docker-Build wurde nicht ausgeführt.
+1. **pjsua-Steuerung:** Die SIP-Engine ist **pjsua** (PJSIP), gestartet mit Telnet-CLI (`--use-cli`, `--cli-telnet-port`) und Log-Level 5. Anruf-, DTMF- und Registrierungsereignisse werden aus dem Log geparst („Call N state changed to", „Received DTMF digit", „registration success/failed"). Diese Log-Zeilen wurden im PJSIP-Quellcode (2.17) verifiziert, das Verhalten in der echten Telefonie-Umgebung ist ungetestet.
+2. **Pakete:** `pjsua`, `py3-aiohttp` und `ffmpeg` sind in Alpine 3.24 (Basis des HA-Base-Images) enthalten. **baresip ist dort nicht verfügbar** (nur in Alpine edge/testing) — deshalb wurde auf pjsua umgestellt. Der Docker-Build auf dem Gerät muss den ersten echten Test ersetzen.
 3. **TTS über die HA-API:** `POST http://supervisor/core/api/tts_get_url` mit `homeassistant_api: true` liefert ein Feld `path`, das sich vom gleichen Proxy herunterladen lässt.
 4. **Piper-Standardwerte:** Die Entity `tts.piper` und die Sprache `de_DE` sind Platzhalter. Der tatsächliche Name steht in Home Assistant unter Einstellungen → Geräte & Dienste → Wyoming-Protokoll.
 5. **Quittierung:** Eine Quittierung gilt nur, wenn die eingestellte Taste (Standard `1`) als DTMF-Signal ankommt. Das setzt voraus, dass der Anbieter DTMF als RFC 2833/4733 oder In-Band durchreicht.
