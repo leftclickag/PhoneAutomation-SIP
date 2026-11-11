@@ -70,11 +70,11 @@ Wenn die App **„Samba share"** läuft, im Windows-Explorer `\\homeassistant.lo
 
 Folgendes wurde beim Schreiben angenommen und muss beim ersten Test geprüft werden:
 
-1. **pjsua-Steuerung:** Die SIP-Engine ist **pjsua** (PJSIP), gestartet mit Telnet-CLI (`--use-cli`, `--cli-telnet-port`) und Log-Level 5. Anruf-, DTMF- und Registrierungsereignisse werden aus dem Log geparst („Call N state changed to", „Received DTMF digit", „registration success/failed"). Diese Log-Zeilen wurden im PJSIP-Quellcode (2.17) verifiziert, das Verhalten in der echten Telefonie-Umgebung ist ungetestet.
+1. **pjsua-Steuerung:** Die SIP-Engine ist **pjsua** (PJSIP), gestartet mit Telnet-CLI (`--use-cli`, `--cli-telnet-port`) und Log-Level 5. Anruf- und Registrierungsereignisse werden aus dem Log geparst („Call N state changed to", „registration success/failed"). DTMF über SIP steht in der Zeile „Incoming DTMF on call N: X, using … method".
 2. **Pakete:** `pjsua`, `py3-aiohttp` und `ffmpeg` sind in Alpine 3.24 (Basis des HA-Base-Images) enthalten. **baresip ist dort nicht verfügbar** (nur in Alpine edge/testing) — deshalb wurde auf pjsua umgestellt. Der Docker-Build auf dem Gerät muss den ersten echten Test ersetzen.
 3. **TTS über die HA-API:** `POST http://supervisor/core/api/tts_get_url` mit `homeassistant_api: true` liefert ein Feld `path`, das sich vom gleichen Proxy herunterladen lässt.
 4. **Piper-Standardwerte:** Die Entity `tts.piper` und die Sprache `de_DE` sind Platzhalter. Der tatsächliche Name steht in Home Assistant unter Einstellungen → Geräte & Dienste → Wyoming-Protokoll.
-5. **Quittierung:** Eine Quittierung gilt nur, wenn die eingestellte Taste (Standard `1`) als DTMF-Signal ankommt. Das setzt voraus, dass der Anbieter DTMF als RFC 2833/4733 oder In-Band durchreicht.
+5. **Quittierung:** Die eingestellte Taste (Standard `1`) beendet die Wiederholungen. Erkannt wird sie sowohl als SIP-DTMF (RFC 2833/4733 oder SIP INFO) als auch als Ton im zurückkommenden Audio, falls das Mobilnetz die Taste nur hörbar überträgt.
 6. **PhoneStar / Swisscom:** Die anbieterspezifischen Einstellungen (SIP-Server, Registrierung, Proxy, Transport, Rufnummernformat) sind nicht bekannt. Der Code nimmt Standard-SIP mit Registrierung und Nummern im internationalen Format (`+41...`) an.
 7. **Erreichbarkeit der Schnittstelle:** Port 8099 wird am Host freigegeben und ist im lokalen Netz erreichbar. Ohne `api_token` kann jedes Gerät im Netz Anrufe auslösen. Für den produktiven Einsatz einen Token setzen.
 8. **Mehrere Anrufe:** Es läuft immer nur ein Alarmablauf mit einem Anruf gleichzeitig. Die Nummern werden nacheinander angerufen, nicht parallel.
