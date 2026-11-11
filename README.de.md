@@ -105,7 +105,7 @@ Abgehakte Punkte wurden beim Installieren und Anrufen bereits beobachtet. Offene
 
 ### Noch zu bestätigen
 
-- [ ] Nach einem Rebuild von Version 0.2.5 enthält das Log `SIP Alarm Caller 0.2.5 bereit auf Port 8099`
+- [ ] Nach einem Rebuild von Version 0.2.6 enthält das Log `SIP Alarm Caller 0.2.6 bereit auf Port 8099`
 - [ ] Nach dem Abheben enthält das Log `Anruf verbunden, warte auf Taste 1`
 - [ ] Taste 1 beendet die Wiederholungen
 - [ ] Das Log enthält `Quittiert mit Taste 1` oder `Tastenton erkannt: 1`

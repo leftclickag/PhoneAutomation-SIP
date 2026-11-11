@@ -63,10 +63,14 @@ def goertzel_power(samples, freq, rate):
 
 
 def detect_dtmf(samples, rate):
-    """One DTMF digit in a ~40 ms block, or None."""
+    """One DTMF digit in a ~40 ms block, or None.
+
+    The gate is low on purpose. On a real call the key showed up around
+    a peak of 200, while a lab tone is in the thousands.
+    """
     if not samples:
         return None
-    if max(abs(s) for s in samples) < 300:
+    if max(abs(s) for s in samples) < 80:
         return None
     norm = [s / 32768.0 for s in samples]
 
@@ -74,10 +78,9 @@ def detect_dtmf(samples, rate):
         return sorted(((goertzel_power(norm, f, rate), f) for f in freqs), reverse=True)
 
     rows, cols = ranked(DTMF_ROWS), ranked(DTMF_COLS)
-    # Real phone lines often have more twist and noise than a clean lab tone.
     if rows[0][0] < rows[1][0] * 3 or cols[0][0] < cols[1][0] * 3:
         return None
-    floor = (len(norm) * 0.008) ** 2
+    floor = (len(norm) * 0.0004) ** 2
     if rows[0][0] < floor or cols[0][0] < floor:
         return None
     ratio = rows[0][0] / cols[0][0]
@@ -183,6 +186,7 @@ class InbandEar:
                 now = asyncio.get_event_loop().time()
                 if now - reported >= 2:
                     log("Rueckaudio Pegel", loud)
+                    await self.events.put({"type": "LEVEL", "param": loud})
                     loud = 0
                     reported = now
                 digit = detect_dtmf(samples, rate)
@@ -235,7 +239,7 @@ class Pjsua:
             "--auto-rec",
             "--max-calls=1",
             "--no-vad",
-            "--stun-srv=stun.l.google.com:19302",
+            "--ec-tail=0",
             "--log-level=5",
             "--app-log-level=5",
             # stdout is a pipe, so pjsua block-buffers logs. Without this, CONFIRMED
@@ -462,6 +466,7 @@ class Caller:
         ear = InbandEar(REC_WAV, self.sip.events)
         ear.start()
         log("Hoere auf Taste", ack)
+        heard = False
         deadline = asyncio.get_event_loop().time() + o["ring_timeout"]
         try:
             while True:
@@ -481,6 +486,10 @@ class Caller:
                     established = True
                     deadline = asyncio.get_event_loop().time() + duration + 5
                     log("Anruf verbunden, warte auf Taste", ack)
+                elif t == "LEVEL" and not heard and ev.get("param", 0) >= 1000:
+                    heard = True
+                    deadline = asyncio.get_event_loop().time() + duration + 5
+                    log("Gegensprech-Audio da, warte auf Taste", ack)
                 elif t == "DTMF":
                     digit = str(ev.get("param"))
                     if digit == ack:
@@ -554,7 +563,7 @@ async def main():
         await web.SockSite(runner, v6).start()
     except OSError as e:
         log("IPv6-Port 8099 nicht gebunden:", e)
-    log("SIP Alarm Caller 0.2.5 bereit auf Port 8099")
+    log("SIP Alarm Caller 0.2.6 bereit auf Port 8099")
     await asyncio.Event().wait()
 
 
