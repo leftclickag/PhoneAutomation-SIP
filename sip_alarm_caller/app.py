@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import re
+import socket
 import wave
 
 import aiohttp
@@ -324,7 +325,18 @@ async def main():
     caller = Caller(sip)
     runner = web.AppRunner(make_app(caller))
     await runner.setup()
-    await web.TCPSite(runner, "0.0.0.0", 8099).start()
+    v4 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    v4.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    v4.bind(("0.0.0.0", 8099))
+    await web.SockSite(runner, v4).start()
+    try:
+        v6 = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
+        v6.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        v6.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+        v6.bind(("::", 8099))
+        await web.SockSite(runner, v6).start()
+    except OSError as e:
+        log("IPv6-Port 8099 nicht gebunden:", e)
     log("SIP Alarm Caller bereit auf Port 8099")
     await asyncio.Event().wait()
 

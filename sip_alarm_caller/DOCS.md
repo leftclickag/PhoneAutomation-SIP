@@ -18,18 +18,24 @@ Wiederholt die Anrufe, bis jemand die Quittiertaste (Standard `1`) drückt.
 
 ## Home-Assistant-Einbindung
 
-`configuration.yaml`:
+In `configuration.yaml` `127.0.0.1` verwenden, nicht `localhost`. Home Assistant löst `localhost` oft als IPv6 (`::1`) auf, die App hört aber auf IPv4, und der Aufruf endet mit „Client error occurred when calling resource“. `127.0.0.1` trifft den Host direkt, weil Home Assistant Core und diese App im Host-Netz laufen.
+
+Die App muss laufen. Im App-Log muss `SIP Alarm Caller bereit auf Port 8099` stehen. Fehlt `sip_server` oder `numbers`, beendet sich die App vorher und der Port bleibt zu. Ist `api_token` gesetzt, denselben Wert im Header `Authorization` mitschicken.
 
 ```yaml
 rest_command:
   sip_alarm_call:
-    url: "http://localhost:8099/alarm"
+    url: "http://127.0.0.1:8099/alarm"
     method: POST
     content_type: "application/json"
     payload: '{"message": "{{ message }}"}'
+    # headers:
+    #   Authorization: "Bearer DEIN_API_TOKEN"
   sip_alarm_stop:
-    url: "http://localhost:8099/stop"
+    url: "http://127.0.0.1:8099/stop"
     method: POST
+    # headers:
+    #   Authorization: "Bearer DEIN_API_TOKEN"
 ```
 
 Automationen:
